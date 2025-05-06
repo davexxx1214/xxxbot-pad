@@ -1,13 +1,13 @@
 # 协议版本选择
 [Protocol]
-version = "849"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
+version = "855"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
 
 [Framework]
-type = "default"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
+type = "dual"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
 
 [WechatAPIServer]
 host = "127.0.0.1"         # WechatAPI服务器地址，默认127.0.0.1，可修改为其他地址
-port = 9011                # WechatAPI服务器端口，默认9000，如有冲突可修改
+port = 9000                # WechatAPI服务器端口，默认9000，如有冲突可修改
 mode = "release"           # 运行模式：release(生产环境)，debug(调试模式)
 redis-host = "127.0.0.1"   # Redis服务器地址，本地使用127.0.0.1
 redis-port = 6379          # Redis端口，使用系统Redis服务的默认端口
@@ -32,7 +32,7 @@ ignore-protection = true             # 是否忽略风控保护机制，建议�
 # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
 # 空字符串表示直连不使用加速
 # 注意: 如果使用加速服务，请确保以"/"结尾
-github-proxy = "https://ghfast.top/"
+# github-proxy = "https://ghfast.top/"
 
 # SQLite数据库地址，一般无需修改
 XYBotDB-url = "sqlite:///database/xybot.db"
@@ -79,8 +79,8 @@ blacklist = [# 黑名单列表
 
 # 系统通知设置
 [Notification]
-enabled = true                      # 是否启用通知功能
-token = ""                          # PushPlus Token，请在 http://www.pushplus.plus/ 注册并填写您的Token
+enabled = false                      # 是否启用通知功能
+token = ""    # PushPlus Token，请在 http://www.pushplus.plus/ 注册并填写您的Token
 channel = "wechat"                  # 通知渠道：wechat(微信公众号)、sms(短信)、mail(邮件)、webhook、cp(企业微信)
 template = "html"                   # 通知模板
 topic = ""                          # 群组编码，不填仅发送给自己

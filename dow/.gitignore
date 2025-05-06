@@ -40,6 +40,7 @@ plugins/banwords/lib/__pycache__
 !plugins/TongyiPlugin
 !plugins/xiaojiejie_pic
 !plugins/yuewen
+!plugins/stability
 client_config.json
 
 # 通道目录

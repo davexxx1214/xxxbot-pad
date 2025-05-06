@@ -19,6 +19,7 @@ from common import const, memory
 from common.utils import parse_markdown_text, print_red
 from common.tmp_dir import TmpDir
 from config import conf
+from bot.openai.open_ai_image import OpenAIImage
 
 UNKNOWN_ERROR_MSG = "我暂时遇到了一些问题，请您稍后重试~"
 
@@ -26,6 +27,8 @@ class DifyBot(Bot):
     def __init__(self):
         super().__init__()
         self.sessions = DifySessionManager(DifySession, model=conf().get("model", const.DIFY))
+        self.image_creator = OpenAIImage()  # 初始化OpenAIImage
+        self.image_create_prefix = conf().get("image_create_prefix", ["画"])  # 从配置读取画图触发词
 
     def reply(self, query, context: Context=None):
         # acquire reply content
@@ -95,7 +98,52 @@ class DifyBot(Bot):
         return context.get(key, conf().get(key, default))
 
     def _reply(self, query: str, session: DifySession, context: Context):
+
+        query = query.strip()
+        for prefix in self.image_create_prefix:
+            if query.startswith(prefix):
+                # 提取画图提示词
+                prompt = query[len(prefix):].strip()
+                logger.info(f"[DIFY] 检测到画图请求，触发词={prefix}，提示词={prompt}")
+                # 调用OpenAIImage创建图片
+                success, result = self.image_creator.create_img(prompt, context=context)
+                if success:
+                    try:
+                        # 使用 BytesIO 读取图片文件
+                        from io import BytesIO
+                        from PIL import Image
+                        
+                        # 打开图片文件
+                        img = Image.open(result)
+                        img_io = BytesIO()
+                        
+                        # 根据图片格式保存
+                        if img.format == 'PNG':
+                            img.save(img_io, format='PNG')
+                        else:
+                            img = img.convert('RGB')
+                            img.save(img_io, format='JPEG')
+                        
+                        img_io.seek(0)
+                        return Reply(ReplyType.IMAGE, img_io), None
+                    except Exception as e:
+                        logger.error(f"[DIFY] 处理图片文件失败: {e}")
+                        # 如果处理失败，尝试直接返回文件路径
+                        return Reply(ReplyType.IMAGE, result), None
+                else:
+                    return Reply(ReplyType.TEXT, result), None
+                
         try:
+            # 检查是否包含深度搜索关键词
+            deepsearch_keywords = ["深度搜索", "深度研究","深入研究","深度推理"]
+            for keyword in deepsearch_keywords:
+                if query.startswith(keyword):
+                    # 截掉关键词，获取实际查询内容
+                    actual_query = query[len(keyword):].strip()
+                    logger.info(f"[DIFY] 检测到深度搜索请求: 关键词={keyword}, 实际查询={actual_query}")
+                    deepsearch_model = conf().get("deepsearch_model", "sonar-reasoning-pro")
+                    return self._use_specific_model(actual_query, context, deepsearch_model)            
+
             session.count_user_message() # 限制一个conversation中消息数，防止conversation过长
             dify_app_type = self._get_dify_conf(context, "dify_app_type", 'chatbot')
             if dify_app_type == 'chatbot' or dify_app_type == 'chatflow':
@@ -113,107 +161,219 @@ class DifyBot(Bot):
             logger.exception(error_info)
             return None, UNKNOWN_ERROR_MSG
 
+    def _use_specific_model(self, query, context, model_name):
+        """使用指定的模型处理请求"""
+        try:
+            logger.info(f"[DIFY] 使用深度搜索模型处理请求: {model_name}")
+            import openai
+            from bot.chatgpt.chat_gpt_bot import ChatGPTBot
+
+            # 先创建实例
+            specific_bot = ChatGPTBot()
+
+            # 保存原始的API配置
+            original_api_key = openai.api_key
+            original_api_base = openai.api_base
+            original_proxy = openai.proxy # 保存原始代理设置
+
+            try:
+                # ... (设置 deepsearch API 配置的代码保持不变) ...
+                # 获取深度搜索的特定API配置，如果未配置则使用默认OpenAI配置
+                deepsearch_api_key = conf().get("deepsearch_api_key", conf().get("open_ai_api_key"))
+                deepsearch_api_base = conf().get("deepsearch_api_base", conf().get("open_ai_api_base"))
+
+                # 设置OpenAI配置 - 这会影响全局配置
+                openai.api_key = deepsearch_api_key
+                if deepsearch_api_base:
+                    openai.api_base = deepsearch_api_base
+                else:
+                    # 如果深度搜索没有指定base，确保使用原始base或默认base
+                    openai.api_base = original_api_base if original_api_base else conf().get("open_ai_api_base")
+
+                logger.info(f"[DIFY] DeepSearch 使用API Base: {openai.api_base}，Key: {openai.api_key[:3]}...{openai.api_key[-3:]}")
+                # 如果有设置代理，也打印出来
+                if openai.proxy:
+                        logger.info(f"[DIFY] DeepSearch 使用 Proxy: {openai.proxy}")
+
+                # 创建新的上下文
+                specific_context = Context(type=ContextType.TEXT, content=query) # 直接设置 content
+
+                # 显式复制必要的属性，尤其是 session_id
+                if context:
+                    # 确保 session_id 被复制
+                    if "session_id" in context:
+                        specific_context["session_id"] = context["session_id"]
+                        logger.debug(f"[DIFY] Copied session_id to specific_context: {context['session_id']}") # 增加日志确认复制
+                    else:
+                         # 如果原始 context 确实没有 session_id，这是一个严重问题
+                         logger.error("[DIFY] Original context is missing 'session_id' in _use_specific_model!")
+                         return None, "内部错误：缺少会话ID"
+
+                    # 复制其他可能被 chatgpt_bot.reply 使用的属性 (可选)
+                    for key in ["msg", "isgroup", "receiver"]: # 按需添加
+                        if key in context:
+                            specific_context[key] = context[key]
+                else:
+                     logger.error("[DIFY] Original context is None in _use_specific_model!")
+                     return None, "内部错误：缺少上下文信息"
+
+                # 设置gpt_model
+                specific_context["gpt_model"] = model_name
+
+                # 使用ChatGPTBot处理请求 (现在 specific_context 应该有 session_id)
+                reply = specific_bot.reply(query, specific_context)
+
+                logger.info(f"[DIFY] 使用模型 {model_name} 处理成功")
+                return reply, None
+            finally:
+                # ... (恢复原始 API 配置的代码保持不变) ...
+                # 恢复原始的API配置
+                openai.api_key = original_api_key
+                openai.api_base = original_api_base
+                openai.proxy = original_proxy # 恢复原始代理设置
+                logger.debug("[DIFY] 恢复原始OpenAI API及代理配置")
+
+        except Exception as e:
+            # ... (异常处理和 failover 代码保持不变) ...
+            # 如果特定模型失败，尝试使用故障转移模型
+            logger.exception(f"[DIFY] 特定模型处理失败: {e}，尝试使用故障转移模型")
+            # 在调用故障转移前，确保OpenAI配置已恢复或设置为故障转移所需状态
+            # (上面的 finally 块已经做了恢复，所以这里应该是安全的)
+            return self._use_failover_bot(query, context) 
+
+
     def _handle_chatbot(self, query: str, session: DifySession, context: Context):
-        api_key = self._get_dify_conf(context, "dify_api_key", '')
-        api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
-        chat_client = ChatClient(api_key, api_base)
-        response_mode = 'blocking'
-        payload = self._get_payload(query, session, response_mode)
-        files = self._get_upload_files(session, context)
-        response = chat_client.create_chat_message(
-            inputs=payload['inputs'],
-            query=payload['query'],
-            user=payload['user'],
-            response_mode=payload['response_mode'],
-            conversation_id=payload['conversation_id'],
-            files=files
-        )
+        try:
+            api_key = self._get_dify_conf(context, "dify_api_key", '')
+            api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
+            chat_client = ChatClient(api_key, api_base)
+            response_mode = 'blocking'
+            payload = self._get_payload(query, session, response_mode)
+            files = self._get_upload_files(session, context)
+            response = chat_client.create_chat_message(
+                inputs=payload['inputs'],
+                query=payload['query'],
+                user=payload['user'],
+                response_mode=payload['response_mode'],
+                conversation_id=payload['conversation_id'],
+                files=files
+            )
 
-        if response.status_code != 200:
-            error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
-            logger.warning(error_info)
-            friendly_error_msg = self._handle_error_response(response.text, response.status_code)
-            return None, friendly_error_msg
+            if response.status_code != 200:
+                error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
+                logger.warning(error_info)
+                
+                # 使用ChatGPTBot作为故障转移
+                logger.info("[DIFY] API返回非200状态码，启动故障转移到ChatGPTBot")
+                return self._use_failover_bot(query, context)
 
-        # response:
-        # {
-        #     "event": "message",
-        #     "message_id": "9da23599-e713-473b-982c-4328d4f5c78a",
-        #     "conversation_id": "45701982-8118-4bc5-8e9b-64562b4555f2",
-        #     "mode": "chat",
-        #     "answer": "xxx",
-        #     "metadata": {
-        #         "usage": {
-        #         },
-        #         "retriever_resources": []
-        #     },
-        #     "created_at": 1705407629
-        # }
-        rsp_data = response.json()
-        logger.debug("[DIFY] usage {}".format(rsp_data.get('metadata', {}).get('usage', 0)))
+            rsp_data = response.json()
+            logger.debug("[DIFY] usage {}".format(rsp_data.get('metadata', {}).get('usage', 0)))
 
-        answer = rsp_data['answer']
-        parsed_content = parse_markdown_text(answer)
+            answer = rsp_data['answer']
+            
+            # 直接使用answer作为回复内容，不进行markdown解析
+            # 不在这里添加@前缀，让gewechat_channel处理
+            reply = Reply(ReplyType.TEXT, answer)
+            
+            # 设置dify conversation_id, 依靠dify管理上下文
+            if session.get_conversation_id() == '':
+                session.set_conversation_id(rsp_data['conversation_id'])
 
-        # {"answer": "![image](/files/tools/dbf9cd7c-2110-4383-9ba8-50d9fd1a4815.png?timestamp=1713970391&nonce=0d5badf2e39466042113a4ba9fd9bf83&sign=OVmdCxCEuEYwc9add3YNFFdUpn4VdFKgl84Cg54iLnU=)"}
-        at_prefix = ""
-        channel = context.get("channel")
-        is_group = context.get("isgroup", False)
-        if is_group:
-            at_prefix = "@" + context["msg"].actual_user_nickname + "\n"
-        for item in parsed_content[:-1]:
-            reply = None
-            if item['type'] == 'text':
-                content = at_prefix + item['content']
-                reply = Reply(ReplyType.TEXT, content)
-            elif item['type'] == 'image':
-                image_url = self._fill_file_base_url(item['content'])
-                image = self._download_image(image_url)
-                if image:
-                    reply = Reply(ReplyType.IMAGE, image)
+            return reply, None
+        except Exception as e:
+            # 记录错误信息
+            error_info = f"[DIFY] Exception in _handle_chatbot: {e}"
+            logger.exception(error_info)
+            
+            # 使用ChatGPTBot作为故障转移
+            logger.info("[DIFY] 发生异常，启动故障转移到ChatGPTBot")
+            return self._use_failover_bot(query, context)
+            
+    def _use_failover_bot(self, query, context):
+        """使用ChatGPTBot作为故障转移处理请求"""
+        try:
+            logger.info("[DIFY] Failover to ChatGPTBot")
+            import openai
+            from bot.chatgpt.chat_gpt_bot import ChatGPTBot
+
+            # 先创建实例 (它会读取一次默认配置，没关系)
+            failover_bot = ChatGPTBot()
+
+            # 使用专门的故障转移API配置
+            failover_api_key = conf().get("failover_api_key", conf().get("open_ai_api_key"))
+            failover_api_base = conf().get("failover_api_base", conf().get("open_ai_api_base"))
+
+            # 保存原始的API配置
+            original_api_key = openai.api_key
+            original_api_base = openai.api_base
+            original_proxy = openai.proxy # 保存原始代理
+
+            try:
+                # 设置Failover的OpenAI配置 - 这会影响全局配置
+                openai.api_key = failover_api_key
+                if failover_api_base:
+                    openai.api_base = failover_api_base
                 else:
-                    reply = Reply(ReplyType.TEXT, f"图片链接：{image_url}")
-            elif item['type'] == 'file':
-                file_url = self._fill_file_base_url(item['content'])
-                file_path = self._download_file(file_url)
-                if file_path:
-                    reply = Reply(ReplyType.FILE, file_path)
+                     # 如果没有指定failover base，确保使用原始base或默认base
+                     openai.api_base = original_api_base if original_api_base else conf().get("open_ai_api_base")
+
+                # 对于 failover，通常应该使用全局代理设置
+                proxy = conf().get("proxy")
+                if proxy:
+                    openai.proxy = proxy
                 else:
-                    reply = Reply(ReplyType.TEXT, f"文件链接：{file_url}")
-            logger.debug(f"[DIFY] reply={reply}")
-            if reply and channel:
-                channel.send(reply, context)
-        # parsed_content 没有数据时，直接不回复
-        if not parsed_content:
-            return None, None
-        final_item = parsed_content[-1]
-        final_reply = None
-        if final_item['type'] == 'text':
-            content = final_item['content']
-            if is_group:
-                at_prefix = "@" + context["msg"].actual_user_nickname + "\n"
-                content = at_prefix + content
-            final_reply = Reply(ReplyType.TEXT, final_item['content'])
-        elif final_item['type'] == 'image':
-            image_url = self._fill_file_base_url(final_item['content'])
-            image = self._download_image(image_url)
-            if image:
-                final_reply = Reply(ReplyType.IMAGE, image)
-            else:
-                final_reply = Reply(ReplyType.TEXT, f"图片链接：{image_url}")
-        elif final_item['type'] == 'file':
-            file_url = self._fill_file_base_url(final_item['content'])
-            file_path = self._download_file(file_url)
-            if file_path:
-                final_reply = Reply(ReplyType.FILE, file_path)
-            else:
-                final_reply = Reply(ReplyType.TEXT, f"文件链接：{file_url}")
+                    openai.proxy = None # 确保如果没有配置全局代理，则清除代理设置
 
-        # 设置dify conversation_id, 依靠dify管理上下文
-        if session.get_conversation_id() == '':
-            session.set_conversation_id(rsp_data['conversation_id'])
+                logger.info(f"[DIFY] Failover using API base: {openai.api_base} with key: {failover_api_key[:3]}...{failover_api_key[-3:]}")
+                if openai.proxy:
+                     logger.info(f"[DIFY] Failover using Proxy: {openai.proxy}")
 
-        return final_reply, None
+                # 使用配置中的failover_model
+                failover_model = conf().get("failover_model", "gpt-3.5-turbo")
+
+                # 创建新的上下文，正确复制原始context的所有属性
+                failover_context = Context(type=ContextType.TEXT, content=query) # 直接设置 content
+
+                # 显式复制必要的属性，尤其是 session_id
+                if context:
+                    # 确保 session_id 被复制
+                    if "session_id" in context:
+                        failover_context["session_id"] = context["session_id"]
+                        logger.debug(f"[DIFY] Copied session_id to failover_context: {context['session_id']}") # 增加日志确认复制
+                    else:
+                        # 如果原始 context 确实没有 session_id，这是一个严重问题
+                        logger.error("[DIFY] Original context is missing 'session_id' in _use_failover_bot!")
+                        return None, "内部错误：缺少会话ID"
+
+                    # 复制其他可能被 chatgpt_bot.reply 使用的属性 (可选)
+                    for key in ["msg", "isgroup", "receiver"]: # 按需添加
+                        if key in context:
+                            failover_context[key] = context[key]
+                else:
+                    logger.error("[DIFY] Original context is None in _use_failover_bot!")
+                    return None, "内部错误：缺少上下文信息"
+
+                # 设置gpt_model
+                failover_context["gpt_model"] = failover_model
+
+                # 使用ChatGPTBot处理请求 (此时openai配置是failover的)
+                reply = failover_bot.reply(query, failover_context)
+
+                logger.info(f"[DIFY] Failover successful using model: {failover_model}")
+                return reply, None
+            finally:
+                # 恢复原始的API配置
+                openai.api_key = original_api_key
+                openai.api_base = original_api_base
+                openai.proxy = original_proxy # 恢复原始代理设置
+                logger.debug("[DIFY] 恢复原始OpenAI API及代理配置")
+
+        except Exception as failover_e:
+            # 如果故障转移也失败，记录错误并返回默认错误消息
+            logger.exception(f"[DIFY] Failover failed: {failover_e}")
+            return None, UNKNOWN_ERROR_MSG
+
 
     def _download_file(self, url):
         try:
@@ -250,99 +410,170 @@ class DifyBot(Bot):
         return None
 
     def _handle_agent(self, query: str, session: DifySession, context: Context):
-        api_key = self._get_dify_conf(context, "dify_api_key", '')
-        api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
-        chat_client = ChatClient(api_key, api_base)
-        response_mode = 'streaming'
-        payload = self._get_payload(query, session, response_mode)
-        files = self._get_upload_files(session, context)
-        response = chat_client.create_chat_message(
-            inputs=payload['inputs'],
-            query=payload['query'],
-            user= payload['user'],
-            response_mode=payload['response_mode'],
-            conversation_id=payload['conversation_id'],
-            files=files
-        )
+        try:
+            api_key = self._get_dify_conf(context, "dify_api_key", '')
+            api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
+            chat_client = ChatClient(api_key, api_base)
+            response_mode = 'streaming'
+            payload = self._get_payload(query, session, response_mode)
+            files = self._get_upload_files(session, context)
+            response = chat_client.create_chat_message(
+                inputs=payload['inputs'],
+                query=payload['query'],
+                user= payload['user'],
+                response_mode=payload['response_mode'],
+                conversation_id=payload['conversation_id'],
+                files=files
+            )
 
-        if response.status_code != 200:
-            error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
-            logger.warning(error_info)
-            friendly_error_msg = self._handle_error_response(response.text, response.status_code)
-            return None, friendly_error_msg
-        # response:
-        # data: {"event": "agent_thought", "id": "8dcf3648-fbad-407a-85dd-73a6f43aeb9f", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "position": 1, "thought": "", "observation": "", "tool": "", "tool_input": "", "created_at": 1705639511, "message_files": [], "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
-        # data: {"event": "agent_thought", "id": "8dcf3648-fbad-407a-85dd-73a6f43aeb9f", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "position": 1, "thought": "", "observation": "", "tool": "dalle3", "tool_input": "{\"dalle3\": {\"prompt\": \"cute Japanese anime girl with white hair, blue eyes, bunny girl suit\"}}", "created_at": 1705639511, "message_files": [], "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
-        # data: {"event": "agent_message", "id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "answer": "I have created an image of a cute Japanese", "created_at": 1705639511, "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
-        # data: {"event": "message_end", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142", "metadata": {"usage": {"prompt_tokens": 305, "prompt_unit_price": "0.001", "prompt_price_unit": "0.001", "prompt_price": "0.0003050", "completion_tokens": 97, "completion_unit_price": "0.002", "completion_price_unit": "0.001", "completion_price": "0.0001940", "total_tokens": 184, "total_price": "0.0002290", "currency": "USD", "latency": 1.771092874929309}}}
-        msgs, conversation_id = self._handle_sse_response(response)
-        channel = context.get("channel")
-        # TODO: 适配除微信以外的其他channel，已添加wx849
-        is_group = context.get("isgroup", False)
-        for msg in msgs[:-1]:
-            if msg['type'] == 'agent_message':
-                if is_group:
-                    at_prefix = "@" + context["msg"].actual_user_nickname + "\n"
-                    msg['content'] = at_prefix + msg['content']
-                reply = Reply(ReplyType.TEXT, msg['content'])
-                channel.send(reply, context)
-            elif msg['type'] == 'message_file':
-                url = self._fill_file_base_url(msg['content']['url'])
+            if response.status_code != 200:
+                error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
+                logger.warning(error_info)
+                friendly_error_msg = self._handle_error_response(response.text, response.status_code)
+                return None, friendly_error_msg
+            # response:
+            # data: {"event": "agent_thought", "id": "8dcf3648-fbad-407a-85dd-73a6f43aeb9f", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "position": 1, "thought": "", "observation": "", "tool": "", "tool_input": "", "created_at": 1705639511, "message_files": [], "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
+            # data: {"event": "agent_thought", "id": "8dcf3648-fbad-407a-85dd-73a6f43aeb9f", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "position": 1, "thought": "", "observation": "", "tool": "dalle3", "tool_input": "{\"dalle3\": {\"prompt\": \"cute Japanese anime girl with white hair, blue eyes, bunny girl suit\"}}", "created_at": 1705639511, "message_files": [], "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
+            # data: {"event": "agent_message", "id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "answer": "I have created an image of a cute Japanese", "created_at": 1705639511, "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142"}
+            # data: {"event": "message_end", "task_id": "9cf1ddd7-f94b-459b-b942-b77b26c59e9b", "id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "message_id": "1fb10045-55fd-4040-99e6-d048d07cbad3", "conversation_id": "c216c595-2d89-438c-b33c-aae5ddddd142", "metadata": {"usage": {"prompt_tokens": 305, "prompt_unit_price": "0.001", "prompt_price_unit": "0.001", "prompt_price": "0.0003050", "completion_tokens": 97, "completion_unit_price": "0.002", "completion_price_unit": "0.001", "completion_price": "0.0001940", "total_tokens": 184, "total_price": "0.0002290", "currency": "USD", "latency": 1.771092874929309}}}
+            msgs, conversation_id = self._handle_sse_response(response)
+            channel = context.get("channel")
+            # TODO: 适配除微信以外的其他channel
+            is_group = context.get("isgroup", False)
+            for msg in msgs[:-1]:
+                if msg['type'] == 'agent_message':
+                    # 不在这里添加@前缀，让gewechat_channel处理
+                    reply = Reply(ReplyType.TEXT, msg['content'])
+                    channel.send(reply, context)
+                elif msg['type'] == 'message_file':
+                    url = self._fill_file_base_url(msg['content']['url'])
+                    reply = Reply(ReplyType.IMAGE_URL, url)
+                    thread = threading.Thread(target=channel.send, args=(reply, context))
+                    thread.start()
+            final_msg = msgs[-1]
+            reply = None
+            if final_msg['type'] == 'agent_message':
+                reply = Reply(ReplyType.TEXT, final_msg['content'])
+            elif final_msg['type'] == 'message_file':
+                url = self._fill_file_base_url(final_msg['content']['url'])
                 reply = Reply(ReplyType.IMAGE_URL, url)
-                thread = threading.Thread(target=channel.send, args=(reply, context))
-                thread.start()
-        # 检查msgs是否为空
-        if not msgs:
-            return None, "No messages received from agent."
-        final_msg = msgs[-1]
-        reply = None
-        if final_msg['type'] == 'agent_message':
-            reply = Reply(ReplyType.TEXT, final_msg['content'])
-        elif final_msg['type'] == 'message_file':
-            url = self._fill_file_base_url(final_msg['content']['url'])
-            reply = Reply(ReplyType.IMAGE_URL, url)
-        # 设置dify conversation_id, 依靠dify管理上下文
-        if session.get_conversation_id() == '':
-            session.set_conversation_id(conversation_id)
-        return reply, None
+            # 设置dify conversation_id, 依靠dify管理上下文
+            if session.get_conversation_id() == '':
+                session.set_conversation_id(conversation_id)
+            return reply, None
+        except Exception as e:
+            # 记录错误信息
+            error_info = f"[DIFY] Exception in _handle_agent: {e}"
+            logger.exception(error_info)
+            
+            # 使用ChatGPTBot作为故障转移
+            try:
+                logger.info("[DIFY] Failover to ChatGPTBot")
+                from bot.chatgpt.chat_gpt_bot import ChatGPTBot
+                
+                # 创建ChatGPTBot实例
+                failover_bot = ChatGPTBot()
+                
+                # 使用配置中的failover_model
+                failover_model = conf().get("failover_model", "gpt-3.5-turbo")
+                
+                # 创建新的上下文，正确复制原始context的所有属性
+                failover_context = Context(type=ContextType.TEXT)
+                
+                # 如果原始context存在，复制其content和kwargs
+                if context:
+                    failover_context.content = context.content
+                    for key, value in context.kwargs.items():
+                        failover_context[key] = value
+                    
+                # 设置gpt_model
+                failover_context["gpt_model"] = failover_model
+                
+                # 使用ChatGPTBot处理请求
+                reply = failover_bot.reply(query, failover_context)
+                
+                logger.info(f"[DIFY] Failover successful using model: {failover_model}")
+                return reply, None
+            except Exception as failover_e:
+                # 如果故障转移也失败，记录错误并返回原始错误
+                logger.exception(f"[DIFY] Failover failed: {failover_e}")
+                return None, UNKNOWN_ERROR_MSG
 
     def _handle_workflow(self, query: str, session: DifySession, context: Context):
-        payload = self._get_workflow_payload(query, session)
-        api_key = self._get_dify_conf(context, "dify_api_key", '')
-        api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
-        dify_client = DifyClient(api_key, api_base)
-        response = dify_client._send_request("POST", "/workflows/run", json=payload)
-        if response.status_code != 200:
-            error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
-            logger.warning(error_info)
-            friendly_error_msg = self._handle_error_response(response.text, response.status_code)
-            return None, friendly_error_msg
+        try:
+            payload = self._get_workflow_payload(query, session)
+            api_key = self._get_dify_conf(context, "dify_api_key", '')
+            api_base = self._get_dify_conf(context, "dify_api_base", "https://api.dify.ai/v1")
+            dify_client = DifyClient(api_key, api_base)
+            response = dify_client._send_request("POST", "/workflows/run", json=payload)
+            if response.status_code != 200:
+                error_info = f"[DIFY] payload={payload} response text={response.text} status_code={response.status_code}"
+                logger.warning(error_info)
+                friendly_error_msg = self._handle_error_response(response.text, response.status_code)
+                return None, friendly_error_msg
 
-        #  {
-        #      "log_id": "djflajgkldjgd",
-        #      "task_id": "9da23599-e713-473b-982c-4328d4f5c78a",
-        #      "data": {
-        #          "id": "fdlsjfjejkghjda",
-        #          "workflow_id": "fldjaslkfjlsda",
-        #          "status": "succeeded",
-        #          "outputs": {
-        #          "text": "Nice to meet you."
-        #          },
-        #          "error": null,
-        #          "elapsed_time": 0.875,
-        #          "total_tokens": 3562,
-        #          "total_steps": 8,
-        #          "created_at": 1705407629,
-        #          "finished_at": 1727807631
-        #      }
-        #  }
+            #  {
+            #      "log_id": "djflajgkldjgd",
+            #      "task_id": "9da23599-e713-473b-982c-4328d4f5c78a",
+            #      "data": {
+            #          "id": "fdlsjfjejkghjda",
+            #          "workflow_id": "fldjaslkfjlsda",
+            #          "status": "succeeded",
+            #          "outputs": {
+            #          "text": "Nice to meet you."
+            #          },
+            #          "error": null,
+            #          "elapsed_time": 0.875,
+            #          "total_tokens": 3562,
+            #          "total_steps": 8,
+            #          "created_at": 1705407629,
+            #          "finished_at": 1727807631
+            #      }
+            #  }
 
-        rsp_data = response.json()
-        if 'data' not in rsp_data or 'outputs' not in rsp_data['data'] or 'text' not in rsp_data['data']['outputs']:
-            error_info = f"[DIFY] Unexpected response format: {rsp_data}"
-            logger.warning(error_info)
-        reply = Reply(ReplyType.TEXT, rsp_data['data']['outputs']['text'])
-        return reply, None
+            rsp_data = response.json()
+            if 'data' not in rsp_data or 'outputs' not in rsp_data['data'] or 'text' not in rsp_data['data']['outputs']:
+                error_info = f"[DIFY] Unexpected response format: {rsp_data}"
+                logger.warning(error_info)
+            reply = Reply(ReplyType.TEXT, rsp_data['data']['outputs']['text'])
+            return reply, None
+        except Exception as e:
+            # 记录错误信息
+            error_info = f"[DIFY] Exception in _handle_workflow: {e}"
+            logger.exception(error_info)
+            
+            # 使用ChatGPTBot作为故障转移
+            try:
+                logger.info("[DIFY] Failover to ChatGPTBot")
+                from bot.chatgpt.chat_gpt_bot import ChatGPTBot
+                
+                # 创建ChatGPTBot实例
+                failover_bot = ChatGPTBot()
+                
+                # 使用配置中的failover_model
+                failover_model = conf().get("failover_model", "gpt-3.5-turbo")
+                
+                # 创建新的上下文，正确复制原始context的所有属性
+                failover_context = Context(type=ContextType.TEXT)
+                
+                # 如果原始context存在，复制其content和kwargs
+                if context:
+                    failover_context.content = context.content
+                    for key, value in context.kwargs.items():
+                        failover_context[key] = value
+                    
+                # 设置gpt_model
+                failover_context["gpt_model"] = failover_model
+                
+                # 使用ChatGPTBot处理请求
+                reply = failover_bot.reply(query, failover_context)
+                
+                logger.info(f"[DIFY] Failover successful using model: {failover_model}")
+                return reply, None
+            except Exception as failover_e:
+                # 如果故障转移也失败，记录错误并返回原始错误
+                logger.exception(f"[DIFY] Failover failed: {failover_e}")
+                return None, UNKNOWN_ERROR_MSG
 
     def _get_upload_files(self, session: DifySession, context: Context):
         session_id = session.get_session_id()

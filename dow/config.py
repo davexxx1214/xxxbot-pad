@@ -185,7 +185,7 @@ available_setting = {
     # 微信849协议配置
     "wx849_api_host": "127.0.0.1",  # 微信849协议API地址
     "wx849_api_port": 9000,  # 微信849协议API端口
-    "wx849_protocol_version": "849",  # 微信849协议版本，可选: "849", "855", "ipad"
+    "wx849_protocol_version": "855",  # 微信849协议版本，可选: "849", "855", "ipad"
     "wx849_callback_host": "127.0.0.1",  # 微信849回调服务监听地址
     "wx849_callback_port": 8088,  # 微信849回调服务监听端口
     "wx849_callback_key": "",  # 微信849回调服务API密钥
