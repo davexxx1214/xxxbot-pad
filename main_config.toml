@@ -7,7 +7,7 @@ type = "dual"  # 可选值: "default", "dual" (dual模式先启动原始框架�
 
 [WechatAPIServer]
 host = "127.0.0.1"         # WechatAPI服务器地址，默认127.0.0.1，可修改为其他地址
-port = 9000                # WechatAPI服务器端口，默认9000，如有冲突可修改
+port = 9011                # WechatAPI服务器端口，默认9000，如有冲突可修改
 mode = "release"           # 运行模式：release(生产环境)，debug(调试模式)
 redis-host = "127.0.0.1"   # Redis服务器地址，本地使用127.0.0.1
 redis-port = 6379          # Redis端口，使用系统Redis服务的默认端口
