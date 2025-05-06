@@ -62,7 +62,9 @@ python app.py
 打开原始框架的配置文件（通常是`config.json`），添加以下设置：
 
 ```json
-"callback_path": "python wx849_callback_sender.py"
+{
+"callback_path": "python wx849_log_callback.py"
+}
 ```
 
 如果你的 Python 路径不同，需要相应调整命令。
@@ -76,7 +78,7 @@ python app.py
 你可以通过手动运行回调脚本来测试配置是否正确：
 
 ```bash
-python wx849_callback_sender.py '{"MsgId":"12345678901234567","FromUserName":"wxid_test123","ToUserName":"filehelper","Content":"这是一条测试消息","Type":1,"CreateTime":1617960123}'
+python wx849_log_callback.py '{"MsgId":"12345678901234567","FromUserName":"wxid_test123","ToUserName":"filehelper","Content":"这是一条测试消息","Type":1,"CreateTime":1617960123}'
 ```
 
 如果配置正确，你应该能在 DOW 框架的日志中看到收到了测试消息。
