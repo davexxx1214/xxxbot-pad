@@ -53,6 +53,8 @@ class Dify(PluginBase):
             # 图片缓存
             self.image_cache = {}
             self.image_cache_timeout = 60  # 秒
+            # 消息ID去重缓存
+            self.image_msgid_cache = set()
         except Exception as e:
             logger.error(f"加载Dify插件配置文件失败: {e}")
             raise
@@ -265,6 +267,13 @@ class Dify(PluginBase):
             from_wxid = message.get("FromWxid")
             sender_wxid = message.get("SenderWxid")
             logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(message.get('Content'))}")
+            # 消息ID去重保护
+            if not msg_id:
+                logger.warning("handle_image: 未获取到消息ID，跳过处理")
+                return
+            if msg_id in self.image_msgid_cache:
+                logger.info(f"handle_image: 消息ID {msg_id} 已处理过，跳过重复处理")
+                return
 
             # 解析图片XML，获取图片大小
             xml_content = message.get("Content")
@@ -318,6 +327,7 @@ class Dify(PluginBase):
                 if from_wxid != sender_wxid:
                     self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
                 logger.info(f"图片缓存: sender_wxid={sender_wxid}, from_wxid={from_wxid}, 大小={len(image_bytes)}")
+                self.image_msgid_cache.add(msg_id)
             else:
                 logger.warning("handle_image: 未能缓存图片，因为图片数据无效")
         except Exception as e:
