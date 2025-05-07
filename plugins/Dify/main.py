@@ -344,9 +344,6 @@ class Dify(PluginBase):
             self.image_model = plugin_config.get("image_model", "dall-e-3")
             self.image_generation_enabled = bool(self.openai_image_api_key)
 
-            # 新增：OpenAI 视觉模型名称配置
-            self.openai_vision_model_name = plugin_config.get("openai_vision_model_name", "gpt-4o")
-
             if self.image_generation_enabled:
                 logger.info(f"OpenAI画图功能已启用，模型: {self.image_model}, API Base: {self.openai_image_api_base}")
             else:
@@ -1046,7 +1043,7 @@ class Dify(PluginBase):
         if not query:
             # 如果仅@机器人而无后续内容
             if self.image_generation_enabled and (message["Content"].strip() == f"@{self.robot_names[0]}" if self.robot_names else False):
-                 await bot.send_at_message(message["FromWxid"], "\n请说出您的需求，例如使用"画 [内容]"来生成图片。", [message["SenderWxid"]])
+                 await bot.send_at_message(message["FromWxid"], "\n请说出您的需求，例如使用“画 [内容]”来生成图片。", [message["SenderWxid"]])
             else:
                 await bot.send_at_message(message["FromWxid"], "\n请输入你的问题或指令。", [message["SenderWxid"]])
             return False # 明确返回 False 表示不再继续处理
@@ -1112,165 +1109,177 @@ class Dify(PluginBase):
     async def handle_quote(self, bot: WechatAPIClient, message: dict):
         """处理引用消息"""
         if not self.enable:
-            return False
+            return
 
-        content = message["Content"].strip() # 用户当前发送的消息文本
-            user_wxid = message["SenderWxid"]
-        is_group = message["IsGroup"]
-        current_chat_id = message["FromWxid"]
-
+        # 提取引用消息的内容
+        content = message["Content"].strip()
         quote_info = message.get("Quote", {})
-        quoted_content_text = quote_info.get("Content", "")
-        quoted_msg_id = quote_info.get("MsgId")
-        quoted_original_chat_id = quote_info.get("FromWxid")
-        quoted_original_sender_wxid = quote_info.get("SenderWxid")
+        quoted_content = quote_info.get("Content", "")
+        quoted_sender = quote_info.get("Nickname", "")
 
-        image_to_recognize_bytes = None
-        if quoted_original_sender_wxid:
-            image_to_recognize_bytes = await self.get_cached_image(quoted_original_sender_wxid)
-            if not image_to_recognize_bytes and quoted_original_chat_id:
-                 image_to_recognize_bytes = await self.get_cached_image(quoted_original_chat_id)
+        # 处理群聊和私聊的情况
+        if message["IsGroup"]:
+            group_id = message["FromWxid"]
+            user_wxid = message["SenderWxid"]
 
-        # 提取用户在当前引用消息中输入的文本部分，并进行初步清理
-        # users_text_part 会移除模型相关的触发词和唤醒词
-        model_for_recognition, users_text_part, is_switch_cmd = self.get_model_from_message(content, user_wxid)
-        
-        cleaned_user_text_for_prompt = users_text_part.strip()
+            # 检查是否是@机器人
+            is_at = self.is_at_message(message)
 
-        # 在群聊中，如果清理后的文本仅仅是对机器人的@, 则视为空文本
-        if is_group and cleaned_user_text_for_prompt.startswith('@'):
-            temp_text_check = cleaned_user_text_for_prompt
-            is_at_bot_only = False
+            # 检查是否在引用消息中@了机器人
+            is_at_bot = False
+            if content.startswith('@'):
+                # 检查@的是否是机器人
+                for robot_name in self.robot_names:
+                    if content.startswith(f'@{robot_name}'):
+                        is_at_bot = True
+                        break
+
+            # 只有当用户@了机器人时，才处理引用消息
+            if is_at and is_at_bot:
+                # 处理@机器人的引用消息
+                query = content
+
+                # 检查是否以@开头，如果是，则移除@部分
+                if content.startswith('@'):
+                    # 先检查是否是@机器人
+                    at_bot_prefix = None
                     for robot_name in self.robot_names:
-                if temp_text_check == f"@{robot_name}": # 完全匹配@机器人
-                    is_at_bot_only = True
+                        if content.startswith(f'@{robot_name}'):
+                            at_bot_prefix = f'@{robot_name}'
                             break
-                if temp_text_check.startswith(f"@{robot_name} "): # 匹配@机器人 后跟空格
-                     # 进一步检查空格后是否还有内容
-                    if not temp_text_check[len(f"@{robot_name}"):].strip():
-                        is_at_bot_only = True
-                                    break
-            if is_at_bot_only:
-                cleaned_user_text_for_prompt = "" # 用户只@了机器人，没有提供有效文本
 
-        perform_recognition = False
-        if image_to_recognize_bytes and cleaned_user_text_for_prompt: # 必须有图片和用户有效文本
-            if not is_group:  # 私聊中引用图片并提供了文本
-                perform_recognition = True
-                logger.info(f"私聊中引用图片并提供文本，触发图片识别: user_wxid={user_wxid}, prompt='{cleaned_user_text_for_prompt}'")
-            else:  # 群聊中，需要@机器人
-                if self.is_at_message(message): # 检查当前回复消息是否@了机器人
-                    perform_recognition = True
-                    logger.info(f"群聊中@机器人，引用图片并提供文本，触发图片识别: user_wxid={user_wxid}, group_id={current_chat_id}, prompt='{cleaned_user_text_for_prompt}'")
-        
-        if perform_recognition:
-            # 使用图片识别流程
-            # 0. 检查 OpenAI API Key 是否配置 (复用 image_generation_enabled)
-            if not self.image_generation_enabled:
-                logger.error("图片识别: OpenAI API Key 未配置 (openai_image_api_key)")
-                err_msg = "\n图片识别功能所需的API密钥未配置，请联系管理员。"
-                if is_group:
-                    await bot.send_at_message(current_chat_id, err_msg, [user_wxid])
-                else:
-                    await bot.send_text_message(current_chat_id, err_msg.strip("\n"))
-                return False
-
-            # 1. 处理可能的Dify模型切换命令 (users_text_part 和 is_switch_cmd 来自之前的 get_model_from_message)
-            # model_for_recognition在这里仅用于解析切换命令，不用于实际的OpenAI调用
-            if is_switch_cmd: # is_switch_cmd 是针对 Dify模型的切换
-                # 如果用户的文本主要是切换Dify模型的命令，则执行切换，不进行图片识别
-                active_model_for_switch = model_for_recognition # model_for_recognition is the Dify model target of switch
-                model_name_switched = next((name for name, config in self.models.items() if config == active_model_for_switch), '未知')
-                reply_text_switched = f"\n已切换到Dify模型 {model_name_switched.upper()}，将一直使用该模型直到下次切换。"
-                if is_group:
-                    await bot.send_at_message(current_chat_id, reply_text_switched, [user_wxid])
-                else:
-                    await bot.send_text_message(current_chat_id, reply_text_switched.strip("\n"))
-                return False
-            
-            # 2. 调用新的OpenAI视觉识别方法
-            # cleaned_user_text_for_prompt 是用户输入的主要文本，作为视觉模型的提示
-            logger.info(f"图片识别: 调用 OpenAI Vision API. User: {user_wxid}, Prompt: '{cleaned_user_text_for_prompt}'")
-            await self.recognize_image_with_openai_vision(
-                bot,
-                message,
-                cleaned_user_text_for_prompt,
-                image_to_recognize_bytes
-            )
-            return False # 明确表示消息已处理
-
-        # --- 如果不执行图片识别，则执行原有的引用消息处理逻辑 ---
-        logger.debug(f"引用消息未触发图片识别 (无图、无有效文本或群聊未@机器人)，执行原有逻辑. User: {user_wxid}")
-        
-        processed_query_for_original_logic = ""
-        if is_group:
-            is_at_message_current = self.is_at_message(message)
-            if is_at_message_current:
-                # query_text_for_dify = content # 用户当前的输入
-                # model_for_original, final_query_original, is_switch_original = self.get_model_from_message(content, user_wxid)
-                # cleaned_user_input_original = final_query_original.strip() # text after model processing
-                
-                #  users_text_part (from above) is already processed for model triggers.
-                #  We need to re-evaluate the 'content' for the original logic's combination.
-                current_user_input_text = content # Original content by user
-                # Remove @bot name if it's the prefix for the original logic combination
-                if current_user_input_text.startswith('@'):
-                    temp_orig_text = current_user_input_text
-                    for robot_name in self.robot_names:
-                        if temp_orig_text.startswith(f"@{robot_name}"):
-                            temp_orig_text = temp_orig_text[len(f"@{robot_name}"):].strip()
-                            break
-                    # if after removing @bot, it's empty, it means user only @bot
-                    # if not temp_orig_text and " " in current_user_input_text: # was @someone else
-                    #    temp_orig_text = current_user_input_text[current_user_input_text.find(" ")+1:].strip()
-                    current_user_input_text = temp_orig_text
-
-
-                if not current_user_input_text: # 如果用户仅@机器人回复引用
-                    processed_query_for_original_logic = f"请针对这条被引用的消息进行回复: '{quoted_content_text}'"
-                else:
-                    processed_query_for_original_logic = f"{current_user_input_text} (这是对我引用的消息 '{quoted_content_text}' 的回复)"
-        else:
-                return True 
-        else: # Private chat original logic
-            if not content:
-                processed_query_for_original_logic = f"请针对这条被引用的消息进行回复: '{quoted_content_text}'"
-            else:
-                processed_query_for_original_logic = f"{content} (这是对我引用的消息 '{quoted_content_text}' 的回复)"
-
-        if not processed_query_for_original_logic:
-             logger.debug("原有引用逻辑中未生成有效query，跳过处理")
-             return True
-
-        model_original, final_processed_query_original, is_switch_original = self.get_model_from_message(processed_query_for_original_logic, user_wxid)
-
-        if is_switch_original:
-            model_name = next(name for name, config in self.models.items() if config == model_original)
-            reply_text = f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。"
-            if is_group:
-                await bot.send_at_message(current_chat_id, reply_text, [user_wxid])
-            else:
-                await bot.send_text_message(current_chat_id, reply_text.strip("\n"))
-                return False
-
-        if not model_original.api_key:
-            model_name = next((name for name, config in self.models.items() if config == model_original), '未知')
-            logger.error(f"原有引用逻辑: 所选模型 '{model_name}' 的API密钥未配置")
-            err_msg = f"\n此模型API密钥未配置，请联系管理员"
-            if is_group:
-                await bot.send_at_message(current_chat_id, err_msg, [user_wxid])
+                    if at_bot_prefix:
+                        # 如果是@机器人，移除@机器人部分
+                        query = content[len(at_bot_prefix):].strip()
+                        logger.debug(f"移除@{at_bot_prefix}后的查询内容: {query}")
                     else:
-                await bot.send_text_message(current_chat_id, err_msg.strip("\n"))
-            return False
+                        # 如果不是@机器人，则尝试找空格
+                        space_index = content.find(' ')
+                        if space_index > 0:
+                            # 只保留空格后面的内容
+                            query = content[space_index+1:].strip()
+                            logger.debug(f"移除@前缀后的查询内容: {query}")
+                        else:
+                            # 如果没有空格，尝试提取@后面的内容
+                            # 找到第一个非空格字符的位置
+                            for i in range(1, len(content)):
+                                if content[i] != '@' and content[i] != ' ':
+                                    query = content[i:].strip()
+                                    logger.debug(f"提取@后面的内容: {query}")
+                                    break
+                            else:
+                                # 如果整个内容都是@，将query设为空
+                                query = ""
+                else:
+                    # 如果不是以@开头，则尝试移除@机器人名称
+                    for robot_name in self.robot_names:
+                        query = query.replace(f"@{robot_name}", "").strip()
 
-        files_for_original_logic = [] # As decided, original logic won't handle new images with quotes for now
+                # 如果没有内容，则使用引用的内容
+                if not query:
+                    query = f"请回复这条消息: '{quoted_content}'"
+                else:
+                    query = f"{query} (引用消息: '{quoted_content}')"
 
-        if await self._check_point(bot, message, model_original):
-            model_name_for_log = next((name for name, config in self.models.items() if config == model_original), '未知')
-            logger.info(f"原有引用逻辑: 使用模型 '{model_name_for_log}' 处理请求. User: {user_wxid}, Query: {final_processed_query_original}")
-            await self.dify(bot, message, final_processed_query_original, files=files_for_original_logic, specific_model=model_original)
+                # 检查是否有唤醒词或触发词
+                model, processed_query, is_switch = self.get_model_from_message(query, user_wxid)
+
+                if is_switch:
+                    model_name = next(name for name, config in self.models.items() if config == model)
+                    await bot.send_at_message(
+                        message["FromWxid"],
+                        f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
+                        [user_wxid]
+                    )
+                    return False
+
+                # 检查模型API密钥是否可用
+                if not model.api_key:
+                    model_name = next((name for name, config in self.models.items() if config == model), '未知')
+                    logger.error(f"所选模型 '{model_name}' 的API密钥未配置")
+                    await bot.send_at_message(message["FromWxid"], f"\n此模型API密钥未配置，请联系管理员", [user_wxid])
+                    return False
+
+                # 检查是否有最近的图片
+                files = []
+                image_content = await self.get_cached_image(group_id)
+                if image_content:
+                    try:
+                        logger.debug("引用消息中发现最近的图片，准备上传到 Dify")
+                        file_id = await self.upload_file_to_dify(
+                            image_content,
+                            f"image_{int(time.time())}.jpg",  # 生成一个有效的文件名
+                            "image/jpeg",
+                            group_id,
+                            model_config=model
+                        )
+                        if file_id:
+                            logger.debug(f"图片上传成功，文件ID: {file_id}")
+                            files = [file_id]
+                        else:
+                            logger.error("图片上传失败")
+                    except Exception as e:
+                        logger.error(f"处理图片失败: {e}")
+
+                if await self._check_point(bot, message, model):
+                    logger.info(f"引用消息使用模型 '{next((name for name, config in self.models.items() if config == model), '未知')}' 处理请求")
+                    await self.dify(bot, message, processed_query, files=files, specific_model=model)
+                else:
+                    logger.info(f"积分检查失败，无法处理引用消息请求")
+        else:
+            # 私聊引用消息处理
+            user_wxid = message["SenderWxid"]
+
+            # 如果没有内容，则使用引用的内容
+            if not content:
+                query = f"请回复这条消息: '{quoted_content}'"
             else:
-            logger.info(f"原有引用逻辑: 用户 {user_wxid} 积分检查失败，无法处理引用消息请求")
+                query = f"{content} (引用消息: '{quoted_content}')"
+
+            # 检查是否有唤醒词或触发词
+            model, processed_query, is_switch = self.get_model_from_message(query, user_wxid)
+
+            if is_switch:
+                model_name = next(name for name, config in self.models.items() if config == model)
+                await bot.send_text_message(
+                    message["FromWxid"],
+                    f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。"
+                )
+                return False
+
+            # 检查模型API密钥是否可用
+            if not model.api_key:
+                model_name = next((name for name, config in self.models.items() if config == model), '未知')
+                logger.error(f"所选模型 '{model_name}' 的API密钥未配置")
+                await bot.send_text_message(message["FromWxid"], "此模型API密钥未配置，请联系管理员")
+                return False
+
+            # 检查是否有最近的图片
+            files = []
+            image_content = await self.get_cached_image(message["FromWxid"])
+            if image_content:
+                try:
+                    logger.debug("引用消息中发现最近的图片，准备上传到 Dify")
+                    file_id = await self.upload_file_to_dify(
+                        image_content,
+                        f"image_{int(time.time())}.jpg",  # 生成一个有效的文件名
+                        "image/jpeg",
+                        message["FromWxid"],
+                        model_config=model
+                    )
+                    if file_id:
+                        logger.debug(f"图片上传成功，文件ID: {file_id}")
+                        files = [file_id]
+                    else:
+                        logger.error("图片上传失败")
+                except Exception as e:
+                    logger.error(f"处理图片失败: {e}")
+
+            if await self._check_point(bot, message, model):
+                logger.info(f"私聊引用消息使用模型 '{next((name for name, config in self.models.items() if config == model), '未知')}' 处理请求")
+                await self.dify(bot, message, processed_query, files=files, specific_model=model)
+            else:
+                logger.info(f"积分检查失败，无法处理引用消息请求")
 
         return False
 
@@ -3027,163 +3036,3 @@ class Dify(PluginBase):
         except Exception as e:
             logger.error(f"处理文件消息失败: {e}")
             logger.error(traceback.format_exc())
-
-    async def recognize_image_with_openai_vision(self, bot: WechatAPIClient, message: dict, prompt_text: str, image_bytes: bytes):
-        """使用OpenAI兼容的API识别图片内容"""
-        user_wxid = message["SenderWxid"]
-        chat_id = message["FromWxid"]
-        is_group = message["IsGroup"]
-
-        try:
-            base64_image = base64.b64encode(image_bytes).decode('utf-8')
-            
-            # 确定图片MIME类型，默认为jpeg
-            image_mime_type = "image/jpeg"
-            try:
-                kind = filetype.guess(image_bytes)
-                if kind:
-                    image_mime_type = kind.mime
-            except Exception as fe:
-                logger.warning(f"无法检测图片类型，将使用默认 {image_mime_type}: {fe}")
-
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.openai_image_api_key}"
-            }
-            
-            payload = {
-                "model": self.openai_vision_model_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt_text},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{image_mime_type};base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 4000  # 可以根据需要调整或设为配置项
-            }
-
-            # 确保API Base URL的格式正确，并附加 /chat/completions
-            api_base = self.openai_image_api_base.rstrip('/')
-            # 移除末尾的 /v1 如果存在，因为 /chat/completions 通常在 /v1 之外或者 API base 本身就是 endpoint 前缀
-            if api_base.endswith('/v1'):
-                api_base = api_base[:-3] # Remove /v1
-            
-            #  如果用户配置的 base_url 就直接是 https://api.openai.com 这样的，后面直接加 /v1/chat/completions
-            #  如果用户配置的是 https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/GATEWAY_NAME/openai 这样的，则后面直接加 /chat/completions
-            #  为了通用性，我们假设 openai_image_api_base 是到类似 .../openai 这一层，后面需要加 /chat/completions
-            #  如果 base_url 没有 /v1, 但通常 chat/completions 在 v1下
-            #  一个更稳妥的做法是检查 base_url 是否包含了 /v1, 如果没有，则加上
-            #  但鉴于 dall-e 的 generations 已经在 /v1 下，chat/completions 也在 /v1 下，
-            #  我们假设 self.openai_image_api_base 本身就是指向 "https://api.openai.com/v1" 或类似结构。
-            
-            # 修正：直接使用 openai_image_api_base 并确保它指向正确的 completions 端点父路径
-            # 例如，如果 openai_image_api_base = "https://api.openai.com/v1", 那么 api_url 应该是 "https://api.openai.com/v1/chat/completions"
-            # 如果 openai_image_api_base = "https://myproxy.com/openai_proxy/v1", 那么 api_url 应该是 "https://myproxy.com/openai_proxy/v1/chat/completions"
-
-            vision_api_url = f"{self.openai_image_api_base.rstrip('/')}/chat/completions"
-
-            logger.info(f"调用OpenAI Vision API: {vision_api_url}, Model: {self.openai_vision_model_name}")
-            logger.debug(f"Vision API Payload (text part): {prompt_text}")
-
-            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.post(vision_api_url, headers=headers, json=payload, timeout=300) as resp: # 300秒超时
-                    if resp.status == 200:
-                        response_json = await resp.json()
-                        if response_json.get("choices") and len(response_json["choices"]) > 0:
-                            first_choice = response_json["choices"][0]
-                            if first_choice.get("message") and first_choice["message"].get("content"):
-                                ai_content = first_choice["message"]["content"].strip()
-                                logger.info(f"OpenAI Vision API 响应: {ai_content[:200]}...")
-                                if is_group:
-                                    await bot.send_at_message(chat_id, f"\n{ai_content}", [user_wxid])
-                                else:
-                                    await bot.send_text_message(chat_id, ai_content)
-                            else:
-                                logger.error(f"OpenAI Vision API 响应格式不正确: 'content' not found. Response: {response_json}")
-                                err_msg = "图片识别失败：API响应内容缺失。"
-                                if is_group: await bot.send_at_message(chat_id, f"\n{err_msg}", [user_wxid])
-                                else: await bot.send_text_message(chat_id, err_msg)
-                        else:
-                            logger.error(f"OpenAI Vision API 响应格式不正确: 'choices' not found or empty. Response: {response_json}")
-                            err_msg = "图片识别失败：API未返回有效结果。"
-                            if is_group: await bot.send_at_message(chat_id, f"\n{err_msg}", [user_wxid])
-                            else: await bot.send_text_message(chat_id, err_msg)
-                    else:
-                        error_text = await resp.text()
-                        logger.error(f"OpenAI Vision API 错误: {resp.status} - {error_text[:500]}")
-                        err_msg = f"图片识别请求失败，状态码: {resp.status}。"
-                        # 尝试解析更具体的错误信息
-                        try:
-                            error_json = json.loads(error_text)
-                            if isinstance(error_json, dict) and "error" in error_json and isinstance(error_json["error"], dict):
-                                detail = error_json["error"].get("message", "")
-                                if detail: err_msg += f" 详情: {detail[:100]}"
-                        except json.JSONDecodeError:
-                            pass # Keep generic error if not JSON
-                        
-                        if is_group: await bot.send_at_message(chat_id, f"\n{err_msg}", [user_wxid])
-                        else: await bot.send_text_message(chat_id, err_msg)
-        except asyncio.TimeoutError:
-            logger.error("OpenAI Vision API 请求超时。")
-            err_msg = "图片识别请求超时，请稍后再试。"
-            if is_group: await bot.send_at_message(chat_id, f"\n{err_msg}", [user_wxid])
-            else: await bot.send_text_message(chat_id, err_msg)
-        except Exception as e:
-            logger.error(f"处理OpenAI Vision API时发生未知错误: {e}")
-            logger.error(traceback.format_exc())
-            err_msg = "图片识别遇到未知错误，请联系管理员。"
-            if is_group: await bot.send_at_message(chat_id, f"\n{err_msg}", [user_wxid])
-            else: await bot.send_text_message(chat_id, err_msg)
-
-
-    @on_voice_message(priority=20)
-    async def handle_voice(self, bot: WechatAPIClient, message: dict):
-        if not self.enable:
-            return
-
-        if message["IsGroup"]:
-            return
-
-        if not self.current_model.api_key:
-            await bot.send_text_message(message["FromWxid"], "你还没配置Dify API密钥！")
-            return False
-
-        query = await self.audio_to_text(bot, message)
-        if not query:
-            await bot.send_text_message(message["FromWxid"], VOICE_TRANSCRIPTION_FAILED)
-            return False
-
-        logger.debug(f"语音转文字结果: {query}")
-
-        # 识别可能的唤醒词
-        model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
-        if is_switch:
-            model_name = next(name for name, config in self.models.items() if config == model)
-            await bot.send_text_message(
-                message["FromWxid"],
-                f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。"
-            )
-            return False
-
-        # 检查识别到的模型API密钥是否可用
-        if not model.api_key:
-            model_name = next((name for name, config in self.models.items() if config == model), '未知')
-            logger.error(f"语音消息选择的模型 '{model_name}' 的API密钥未配置")
-            await bot.send_text_message(message["FromWxid"], "所选模型的API密钥未配置，请联系管理员")
-            return False
-
-        # 积分检查
-        if await self._check_point(bot, message, model):
-            logger.info(f"语音消息使用模型 '{next((name for name, config in self.models.items() if config == model), '未知')}' 处理请求")
-            await self.dify(bot, message, processed_query, specific_model=model)
-        else:
-            logger.info(f"积分检查失败，无法处理语音消息请求")
-        return False
