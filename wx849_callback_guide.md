@@ -63,7 +63,7 @@ python app.py
 
 ```json
 {
-"callback_path": "python wx849_log_callback.py"
+"callback_path": "python3 wx849_log_callback.py"
 }
 ```
 

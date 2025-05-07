@@ -267,7 +267,7 @@ def monitor_log_file(log_file_path):
 def main():
     """主函数"""
     # 获取日志文件路径
-    log_file_path = os.path.join("logs", "XYBot_2025-05-04_17-09-24_707021.log")
+    log_file_path = os.path.join("logs", "XYBot_2025-05-07_02-16-38_694810.log")
 
     # 检查日志文件是否存在
     if not os.path.exists(log_file_path):
