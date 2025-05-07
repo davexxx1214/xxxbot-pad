@@ -46,6 +46,13 @@ class Dify(PluginBase):
             self.openai_image_api_key = plugin_config.get("openai_image_api_key", None)
             self.openai_image_api_base = plugin_config.get("openai_image_api_base", "https://api.openai.com/v1")
             self.image_model = plugin_config.get("image_model", "dall-e-3")
+            # 读取识图API配置
+            self.vision_api_key = plugin_config.get("vision_api_key", None)
+            self.vision_api_base = plugin_config.get("vision_api_base", None)
+            self.vision_model = plugin_config.get("vision_model", "o3")
+            # 图片缓存
+            self.image_cache = {}
+            self.image_cache_timeout = 60  # 秒
         except Exception as e:
             logger.error(f"加载Dify插件配置文件失败: {e}")
             raise
@@ -181,12 +188,49 @@ class Dify(PluginBase):
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
         quoted_content = quote_info.get("Content", "")
-        if not content:
-            query = f"请回复这条消息: '{quoted_content}'"
+        # 群聊
+        if message["IsGroup"]:
+            group_id = message["FromWxid"]
+            user_wxid = message["SenderWxid"]
+            is_at = self.is_at_message(message, self.robot_names)
+            is_at_bot = False
+            if content.startswith('@'):
+                for robot_name in self.robot_names:
+                    if content.startswith(f'@{robot_name}'):
+                        is_at_bot = True
+                        break
+            if is_at and is_at_bot:
+                # 去掉@机器人名
+                query = content
+                for robot_name in self.robot_names:
+                    if query.startswith(f'@{robot_name}'):
+                        query = query[len(f'@{robot_name}'):].strip()
+                image_content = await self.get_cached_image(group_id)
+                if image_content and query:
+                    base64_img = self.encode_image_to_base64(image_content)
+                    await self.handle_vision_image(base64_img, query, bot, message)
+                    return False
+                # 否则走原有流程
+                if not query:
+                    query = f"请回复这条消息: '{quoted_content}'"
+                else:
+                    query = f"{query} (引用消息: '{quoted_content}')"
+                await self.dify(bot, message, query)
+                return False
+        # 私聊
         else:
-            query = f"{content} (引用消息: '{quoted_content}')"
-        await self.dify(bot, message, query)
-        return False
+            user_wxid = message["SenderWxid"]
+            image_content = await self.get_cached_image(message["FromWxid"])
+            if image_content and content:
+                base64_img = self.encode_image_to_base64(image_content)
+                await self.handle_vision_image(base64_img, content, bot, message)
+                return False
+            if not content:
+                query = f"请回复这条消息: '{quoted_content}'"
+            else:
+                query = f"{content} (引用消息: '{quoted_content}')"
+            await self.dify(bot, message, query)
+            return False
 
     async def dify(self, bot, message: dict, query: str):
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
@@ -237,3 +281,52 @@ class Dify(PluginBase):
             for paragraph in paragraphs:
                 if paragraph.strip():
                     await bot.send_text_message(message["FromWxid"], paragraph.strip())
+
+    def encode_image_to_base64(self, image_bytes):
+        return base64.b64encode(image_bytes).decode('utf-8')
+
+    async def get_cached_image(self, user_wxid: str):
+        """获取用户最近的图片，仿原有逻辑"""
+        cache = self.image_cache.get(user_wxid)
+        if cache:
+            if time.time() - cache["timestamp"] <= self.image_cache_timeout:
+                return cache["content"]
+            else:
+                del self.image_cache[user_wxid]
+        return None
+
+    async def handle_vision_image(self, base64_image, prompt, bot, message):
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.vision_api_key}"
+        }
+        payload = {
+            "model": self.vision_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]
+                }
+            ]
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{self.vision_api_base}/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        response_json = await resp.json()
+                        if "choices" in response_json and len(response_json["choices"]) > 0:
+                            first_choice = response_json["choices"][0]
+                            if "message" in first_choice and "content" in first_choice["message"]:
+                                reply_content = first_choice["message"]["content"].strip()
+                            else:
+                                reply_content = "Content not found in the OpenAI API response"
+                        else:
+                            reply_content = "No choices available in the OpenAI API response"
+                    else:
+                        reply_content = f"识图API请求失败: {resp.status}"
+        except Exception as e:
+            reply_content = f"识图API调用异常: {e}"
+        await bot.send_text_message(message["FromWxid"], reply_content)
