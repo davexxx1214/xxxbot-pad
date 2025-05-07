@@ -260,12 +260,69 @@ class Dify(PluginBase):
 
     @on_image_message(priority=20)
     async def handle_image(self, bot, message: dict):
-        # ... 你的图片解析和下载逻辑 ...
-        # image_bytes = ... # 你的图片二进制内容
-        self.image_cache[message["SenderWxid"]] = {"content": image_bytes, "timestamp": time.time()}
-        if message["FromWxid"] != message["SenderWxid"]:
-            self.image_cache[message["FromWxid"]] = {"content": image_bytes, "timestamp": time.time()}
-        logger.info(f"图片缓存: sender_wxid={message['SenderWxid']}, from_wxid={message['FromWxid']}, 大小={len(image_bytes)}")
+        """处理图片消息并缓存图片内容"""
+        try:
+            msg_id = message.get("MsgId")
+            from_wxid = message.get("FromWxid")
+            sender_wxid = message.get("SenderWxid")
+            logger.info(f"收到图片消息: 消息ID:{msg_id} 来自:{from_wxid} 发送人:{sender_wxid}")
+
+            # 解析图片XML，获取图片大小
+            xml_content = message.get("Content")
+            length = None
+            if isinstance(xml_content, str) and "<img " in xml_content:
+                import xml.etree.ElementTree as ET
+                try:
+                    root = ET.fromstring(xml_content)
+                    img_elem = root.find("img")
+                    if img_elem is not None:
+                        length = int(img_elem.get("length", "0"))
+                        logger.info(f"解析图片XML成功: length={length}")
+                except Exception as e:
+                    logger.warning(f"解析图片XML失败: {e}")
+
+            # 分段下载图片
+            image_bytes = b""
+            if length and msg_id:
+                chunk_size = 65536
+                chunks = (length + chunk_size - 1) // chunk_size
+                logger.info(f"开始分段下载图片，总大小: {length} 字节，分 {chunks} 段下载")
+                for i in range(chunks):
+                    start_pos = i * chunk_size
+                    try:
+                        chunk = await bot.get_msg_image(msg_id, from_wxid, length, start_pos=start_pos)
+                        if chunk:
+                            image_bytes += chunk
+                            logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk)} 字节")
+                        else:
+                            logger.error(f"第 {i+1}/{chunks} 段下载失败，数据为空")
+                    except Exception as e:
+                        logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
+                logger.info(f"分段下载图片成功，总大小: {len(image_bytes)} 字节")
+            else:
+                logger.warning("未能获取图片长度或消息ID，无法分段下载图片")
+
+            # 校验图片有效性
+            if image_bytes:
+                try:
+                    Image.open(io.BytesIO(image_bytes))
+                    logger.info(f"图片校验成功，准备缓存，大小: {len(image_bytes)} 字节")
+                except Exception as e:
+                    logger.error(f"图片校验失败: {e}")
+                    image_bytes = None
+            else:
+                logger.warning("未能获取到有效的图片数据，未缓存")
+
+            # 缓存图片
+            if image_bytes:
+                self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
+                if from_wxid != sender_wxid:
+                    self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
+                logger.info(f"图片缓存: sender_wxid={sender_wxid}, from_wxid={from_wxid}, 大小={len(image_bytes)}")
+            else:
+                logger.warning("handle_image: 未能缓存图片，因为图片数据无效")
+        except Exception as e:
+            logger.error(f"handle_image: 处理图片消息异常: {e}")
 
     async def dify(self, bot, message: dict, query: str):
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
