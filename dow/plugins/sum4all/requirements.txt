@@ -1,0 +1,10 @@
+python-docx
+markdown
+jieba
+PyMuPDF
+openpyxl
+beautifulsoup4
+python-pptx
+websocket-client
+dashscope
+google-generativeai
