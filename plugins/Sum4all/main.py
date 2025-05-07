@@ -61,10 +61,10 @@ class Sum4all(PluginBase):
     @on_text_message(priority=10)
     async def handle_text(self, bot, message: dict):
         if not self.enable:
-            return
+            return True
         content = message["Content"].strip()
         if not content:
-            return
+            return True
         is_trigger = False
         if not message["IsGroup"]:
             if content.startswith(self.vision_prefix):
@@ -84,12 +84,13 @@ class Sum4all(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-            return True
+            return False  # 阻止后续插件处理
+        return True  # 允许后续插件处理
 
     @on_image_message(priority=10)
     async def handle_image(self, bot, message: dict):
         if not self.enable:
-            return
+            return True
         msg_id = message.get("MsgId")
         from_wxid = message.get("FromWxid")
         sender_wxid = message.get("SenderWxid")
@@ -98,15 +99,15 @@ class Sum4all(PluginBase):
         # 只处理xml格式的图片消息
         if not (isinstance(xml_content, str) and "<img " in xml_content):
             logger.info("Sum4all: 非xml格式图片消息，跳过")
-            return
+            return True
         # 消息ID去重
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
-            return
+            return True
         key = f"{from_wxid}|{sender_wxid}" if message.get("IsGroup") else sender_wxid
         if key not in self.waiting_vision:
             logger.info(f"Sum4all: 当前无待识图状态: {key}")
-            return
+            return True
         # 解析图片XML，获取图片大小
         length = None
         if isinstance(xml_content, str) and "<img " in xml_content:
@@ -153,6 +154,7 @@ class Sum4all(PluginBase):
         self.waiting_vision.pop(key, None)
         self.image_msgid_cache.add(msg_id)
         logger.info(f"Sum4all: 识图流程结束: MsgId={msg_id}")
+        return False  # 阻止后续插件处理
 
     async def handle_vision_image(self, image_bytes, bot, message):
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
