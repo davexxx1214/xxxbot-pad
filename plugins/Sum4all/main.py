@@ -95,11 +95,7 @@ class Sum4all(PluginBase):
         from_wxid = message.get("FromWxid")
         sender_wxid = message.get("SenderWxid")
         xml_content = message.get("Content")
-        logger.info(f"Sum4all: 收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}")
-        # 只处理xml格式的图片消息
-        if not (isinstance(xml_content, str) and "<img " in xml_content):
-            logger.info("Sum4all: 非xml格式图片消息，跳过")
-            return True
+        logger.info(f"Sum4all: 收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(xml_content)}")
         # 消息ID去重
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
@@ -108,8 +104,9 @@ class Sum4all(PluginBase):
         if key not in self.waiting_vision:
             logger.info(f"Sum4all: 当前无待识图状态: {key}")
             return True
-        # 解析图片XML，获取图片大小
-        length = None
+
+        image_bytes = b""
+        # 1. xml格式，分段下载
         if isinstance(xml_content, str) and "<img " in xml_content:
             import xml.etree.ElementTree as ET
             try:
@@ -118,28 +115,35 @@ class Sum4all(PluginBase):
                 if img_elem is not None:
                     length = int(img_elem.get("length", "0"))
                     logger.info(f"Sum4all: 解析图片XML成功: length={length}")
+                    if length and msg_id:
+                        chunk_size = 65536
+                        chunks = (length + chunk_size - 1) // chunk_size
+                        logger.info(f"Sum4all: 开始分段下载图片，总大小: {length} 字节，分 {chunks} 段下载")
+                        for i in range(chunks):
+                            start_pos = i * chunk_size
+                            try:
+                                chunk = await bot.get_msg_image(msg_id, from_wxid, length, start_pos=start_pos)
+                                if chunk:
+                                    image_bytes += chunk
+                                    logger.debug(f"Sum4all: 第 {i+1}/{chunks} 段下载成功，大小: {len(chunk)} 字节")
+                                else:
+                                    logger.error(f"Sum4all: 第 {i+1}/{chunks} 段下载失败，数据为空")
+                            except Exception as e:
+                                logger.error(f"Sum4all: 下载第 {i+1}/{chunks} 段时出错: {e}")
+                        logger.info(f"Sum4all: 分段下载图片成功，总大小: {len(image_bytes)} 字节")
             except Exception as e:
                 logger.warning(f"Sum4all: 解析图片XML失败: {e}")
-        # 分段下载图片
-        image_bytes = b""
-        if length and msg_id:
-            chunk_size = 65536
-            chunks = (length + chunk_size - 1) // chunk_size
-            logger.info(f"Sum4all: 开始分段下载图片，总大小: {length} 字节，分 {chunks} 段下载")
-            for i in range(chunks):
-                start_pos = i * chunk_size
-                try:
-                    chunk = await bot.get_msg_image(msg_id, from_wxid, length, start_pos=start_pos)
-                    if chunk:
-                        image_bytes += chunk
-                        logger.debug(f"Sum4all: 第 {i+1}/{chunks} 段下载成功，大小: {len(chunk)} 字节")
-                    else:
-                        logger.error(f"Sum4all: 第 {i+1}/{chunks} 段下载失败，数据为空")
-                except Exception as e:
-                    logger.error(f"Sum4all: 下载第 {i+1}/{chunks} 段时出错: {e}")
-            logger.info(f"Sum4all: 分段下载图片成功，总大小: {len(image_bytes)} 字节")
-        else:
-            logger.warning("Sum4all: 未能获取图片长度或消息ID，无法分段下载图片")
+        # 2. base64格式，直接解码
+        elif isinstance(xml_content, str):
+            try:
+                # 只要内容长度大于100且不是xml，基本就是base64图片
+                if len(xml_content) > 100 and not xml_content.strip().startswith("<?xml"):
+                    logger.info("Sum4all: 尝试base64解码图片内容")
+                    import base64
+                    image_bytes = base64.b64decode(xml_content)
+            except Exception as e:
+                logger.warning(f"Sum4all: base64解码失败: {e}")
+
         # 校验图片有效性
         if image_bytes and len(image_bytes) > 0:
             try:
@@ -154,7 +158,7 @@ class Sum4all(PluginBase):
         self.waiting_vision.pop(key, None)
         self.image_msgid_cache.add(msg_id)
         logger.info(f"Sum4all: 识图流程结束: MsgId={msg_id}")
-        return False  # 阻止后续插件处理
+        return False
 
     async def handle_vision_image(self, image_bytes, bot, message):
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
