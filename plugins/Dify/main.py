@@ -1413,9 +1413,9 @@ class Dify(PluginBase):
                             self.db.save_llm_thread_id(message["FromWxid"], new_con_id, "dify")
 
                         # 过滤掉思考标签
-                        think_pattern = r'<think>.*?</think>'
-                        ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
-                        logger.debug(f"API代理返回(过滤思考标签后): {ai_resp[:100]}...")
+                        # think_pattern = r'<think>.*?</think>'
+                        # ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                        # logger.debug(f"API代理返回(过滤思考标签后): {ai_resp[:100]}...")
 
                         if ai_resp:
                             await self.dify_handle_text(bot, message, ai_resp, model)
@@ -1455,8 +1455,8 @@ class Dify(PluginBase):
                                     ai_resp = resp_json.get("answer", "")
                                 elif event == "message_end":
                                     # 在消息结束时过滤掉思考标签
-                                    think_pattern = r'<think>.*?</think>'
-                                    ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                                    # think_pattern = r'<think>.*?</think>'
+                                    # ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
                                     logger.debug(f"消息结束时过滤思考标签")
                                 elif event == "message_file":
                                     file_url = resp_json.get("url", "")
@@ -1475,9 +1475,9 @@ class Dify(PluginBase):
                             ai_resp = ai_resp.rstrip()
 
                             # 最后再次过滤思考标签，确保完全移除
-                            think_pattern = r'<think>.*?</think>'
-                            ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
-                            logger.debug(f"Dify响应(过滤思考标签后): {ai_resp[:100]}...")
+                            # think_pattern = r'<think>.*?</think>'
+                            # ai_resp = re.sub(think_pattern, '', ai_resp, flags=re.DOTALL)
+                            # logger.debug(f"Dify响应(过滤思考标签后): {ai_resp[:100]}...")
                         elif resp.status == 404:
                             logger.warning("会话ID不存在，重置会话ID并重试")
                             self.db.save_llm_thread_id(message["FromWxid"], "", "dify")
