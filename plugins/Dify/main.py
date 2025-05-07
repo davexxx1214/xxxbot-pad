@@ -1739,9 +1739,9 @@ class Dify(PluginBase):
         model = model_config or self.current_model
 
         # 先过滤掉<think>...</think>标签中的内容
-        think_pattern = r'<think>.*?</think>'
-        text = re.sub(think_pattern, '', text, flags=re.DOTALL)
-        logger.debug(f"过滤思考标签后的文本: {text[:100]}...")
+        # think_pattern = r'<think>.*?</think>'
+        # text = re.sub(think_pattern, '', text, flags=re.DOTALL)
+        # logger.debug(f"过滤思考标签后的文本: {text[:100]}...")
 
         # 匹配Dify返回的图片引用格式
         image_pattern = r'\[(.*?)\]\((.*?)\)'
