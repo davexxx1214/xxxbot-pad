@@ -1761,75 +1761,75 @@ class Dify(PluginBase):
                         await bot.send_text_message(message["FromWxid"], paragraph.strip())
 
         # 如果有图片引用，只处理最后一个
-        if matches:
-            filename, url = matches[-1]  # 只取最后一个图片
-            try:
-                # 如果URL是相对路径,添加base_url
-                if url.startswith('/files'):
-                    # 移除base_url中可能的v1路径
-                    base_url = model.base_url.replace('/v1', '')
-                    url = f"{base_url}{url}"
+        # if matches:
+        #     filename, url = matches[-1]  # 只取最后一个图片
+        #     try:
+        #         # 如果URL是相对路径,添加base_url
+        #         if url.startswith('/files'):
+        #             # 移除base_url中可能的v1路径
+        #             base_url = model.base_url.replace('/v1', '')
+        #             url = f"{base_url}{url}"
 
-                logger.debug(f"处理图片链接: {url}")
-                headers = {"Authorization": f"Bearer {model.api_key}"}
-                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                    async with session.get(url, headers=headers) as resp:
-                        if resp.status == 200:
-                            image_data = await resp.read()
-                            await bot.send_image_message(message["FromWxid"], image_data)
-                        else:
-                            logger.error(f"下载图片失败: HTTP {resp.status}")
-                            await bot.send_text_message(message["FromWxid"], f"下载图片失败: HTTP {resp.status}")
-            except Exception as e:
-                logger.error(f"处理图片 {url} 失败: {e}")
-                await bot.send_text_message(message["FromWxid"], f"处理图片失败: {str(e)}")
+        #         logger.debug(f"处理图片链接: {url}")
+        #         headers = {"Authorization": f"Bearer {model.api_key}"}
+        #         async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
+        #             async with session.get(url, headers=headers) as resp:
+        #                 if resp.status == 200:
+        #                     image_data = await resp.read()
+        #                     await bot.send_image_message(message["FromWxid"], image_data)
+        #                 else:
+        #                     logger.error(f"下载图片失败: HTTP {resp.status}")
+        #                     await bot.send_text_message(message["FromWxid"], f"下载图片失败: HTTP {resp.status}")
+        #     except Exception as e:
+        #         logger.error(f"处理图片 {url} 失败: {e}")
+        #         await bot.send_text_message(message["FromWxid"], f"处理图片失败: {str(e)}")
 
-        # 处理其他类型的链接
-        pattern = r"\]$$(https?:\/\/[^\s$$]+)\)"
-        links = re.findall(pattern, text)
-        for url in links:
-            try:
-                file_content = await self.download_file(url)
-                if file_content:
-                    # 检测文件类型
-                    kind = filetype.guess(file_content)
-                    if kind is None:
-                        # 如果无法检测文件类型，尝试从URL获取
-                        ext = os.path.splitext(url)[1].lower().lstrip('.')
-                        if not ext:
-                            logger.warning(f"无法识别文件类型: {url}")
-                            continue
-                    else:
-                        ext = kind.extension
+        # # 处理其他类型的链接
+        # pattern = r"\]$$(https?:\/\/[^\s$$]+)\)"
+        # links = re.findall(pattern, text)
+        # for url in links:
+        #     try:
+        #         file_content = await self.download_file(url)
+        #         if file_content:
+        #             # 检测文件类型
+        #             kind = filetype.guess(file_content)
+        #             if kind is None:
+        #                 # 如果无法检测文件类型，尝试从URL获取
+        #                 ext = os.path.splitext(url)[1].lower().lstrip('.')
+        #                 if not ext:
+        #                     logger.warning(f"无法识别文件类型: {url}")
+        #                     continue
+        #             else:
+        #                 ext = kind.extension
 
-                    # 根据文件类型发送不同类型的消息
-                    if ext in ('wav', 'mp3', 'ogg', 'm4a'):
-                        await bot.send_voice_message(message["FromWxid"], voice=file_content, format=ext)
-                        logger.info(f"发送语音消息成功，大小: {len(file_content)} 字节")
-                    elif ext in ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'):
-                        await bot.send_image_message(message["FromWxid"], file_content)
-                        logger.info(f"发送图片消息成功，大小: {len(file_content)} 字节")
-                    elif ext in ('mp4', 'avi', 'mov', 'mkv', 'flv'):
-                        await bot.send_video_message(message["FromWxid"], video=file_content, image="None")
-                        logger.info(f"发送视频消息成功，大小: {len(file_content)} 字节")
-                    else:
-                        # 其他类型文件，发送文本通知
-                        file_name = os.path.basename(url)
-                        await bot.send_text_message(message["FromWxid"], f"下载了文件: {file_name}\n类型: {ext}\n大小: {len(file_content)/1024:.2f} KB")
-                        logger.info(f"发送文件通知成功，文件名: {file_name}, 类型: {ext}, 大小: {len(file_content)} 字节")
-            except Exception as e:
-                logger.error(f"处理链接文件 {url} 失败: {e}")
-                logger.error(traceback.format_exc())
-                await bot.send_text_message(message["FromWxid"], f"下载文件 {url} 失败")
+        #             # 根据文件类型发送不同类型的消息
+        #             if ext in ('wav', 'mp3', 'ogg', 'm4a'):
+        #                 await bot.send_voice_message(message["FromWxid"], voice=file_content, format=ext)
+        #                 logger.info(f"发送语音消息成功，大小: {len(file_content)} 字节")
+        #             elif ext in ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'):
+        #                 await bot.send_image_message(message["FromWxid"], file_content)
+        #                 logger.info(f"发送图片消息成功，大小: {len(file_content)} 字节")
+        #             elif ext in ('mp4', 'avi', 'mov', 'mkv', 'flv'):
+        #                 await bot.send_video_message(message["FromWxid"], video=file_content, image="None")
+        #                 logger.info(f"发送视频消息成功，大小: {len(file_content)} 字节")
+        #             else:
+        #                 # 其他类型文件，发送文本通知
+        #                 file_name = os.path.basename(url)
+        #                 await bot.send_text_message(message["FromWxid"], f"下载了文件: {file_name}\n类型: {ext}\n大小: {len(file_content)/1024:.2f} KB")
+        #                 logger.info(f"发送文件通知成功，文件名: {file_name}, 类型: {ext}, 大小: {len(file_content)} 字节")
+        #     except Exception as e:
+        #         logger.error(f"处理链接文件 {url} 失败: {e}")
+        #         logger.error(traceback.format_exc())
+        #         await bot.send_text_message(message["FromWxid"], f"下载文件 {url} 失败")
 
-        # 识别普通文件链接
-        file_pattern = r'https?://[^\s<>"]+?/[^\s<>"]+\.(?:pdf|doc|docx|xls|xlsx|txt|zip|rar|7z|tar|gz)'
-        file_links = re.findall(file_pattern, text)
-        for url in file_links:
-            await self.download_and_send_file(bot, message, url)
+        # # 识别普通文件链接
+        # file_pattern = r'https?://[^\s<>"]+?/[^\s<>"]+\.(?:pdf|doc|docx|xls|xlsx|txt|zip|rar|7z|tar|gz)'
+        # file_links = re.findall(file_pattern, text)
+        # for url in file_links:
+        #     await self.download_and_send_file(bot, message, url)
 
-        pattern = r'\$\$[^$$]+\]\$\$https?:\/\/[^\s$$]+\)'
-        text = re.sub(pattern, '', text)
+        # pattern = r'\$\$[^$$]+\]\$\$https?:\/\/[^\s$$]+\)'
+        # text = re.sub(pattern, '', text)
 
     async def dify_handle_image(self, bot: WechatAPIClient, message: dict, image: Union[str, bytes], model_config=None):
         try:
