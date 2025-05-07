@@ -11,7 +11,7 @@ from utils.plugin_base import PluginBase
 import traceback
 from PIL import Image
 import base64
-from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
+from utils.decorators import on_text_message, on_at_message, on_quote_message
 
 # 只保留必要的常量
 DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
@@ -46,15 +46,6 @@ class Dify(PluginBase):
             self.openai_image_api_key = plugin_config.get("openai_image_api_key", None)
             self.openai_image_api_base = plugin_config.get("openai_image_api_base", "https://api.openai.com/v1")
             self.image_model = plugin_config.get("image_model", "dall-e-3")
-            # 读取识图API配置
-            self.vision_api_key = plugin_config.get("vision_api_key", None)
-            self.vision_api_base = plugin_config.get("vision_api_base", None)
-            self.vision_model = plugin_config.get("vision_model", "o3")
-            # 图片缓存
-            self.image_cache = {}
-            self.image_cache_timeout = 60  # 秒
-            # 消息ID去重缓存
-            self.image_msgid_cache = set()
         except Exception as e:
             logger.error(f"加载Dify插件配置文件失败: {e}")
             raise
@@ -111,11 +102,6 @@ class Dify(PluginBase):
                             await bot.send_image_message(message["FromWxid"], image_bytes)
                             if message["IsGroup"]:
                                 await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [message["SenderWxid"]])
-                            # 在 handle_image 里
-                            self.image_cache[message["SenderWxid"]] = {"content": image_bytes, "timestamp": time.time()}
-                            if message["FromWxid"] != message["SenderWxid"]:
-                                self.image_cache[message["FromWxid"]] = {"content": image_bytes, "timestamp": time.time()}
-                            logger.info(f"图片缓存: sender_wxid={message['SenderWxid']}, from_wxid={message['FromWxid']}, 大小={len(image_bytes)}")
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
@@ -192,149 +178,15 @@ class Dify(PluginBase):
     async def handle_quote(self, bot, message: dict):
         if not self.enable:
             return
-
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
         quoted_content = quote_info.get("Content", "")
-        quoted_msgtype = quote_info.get("MsgType", None)
-
-        # 判断引用的是否为图片消息
-        is_quoted_image = quoted_msgtype == 3
-        if not is_quoted_image and "img" in quoted_content:
-            is_quoted_image = True
-
-        # 获取引用图片的发送者wxid（优先 chatusr、fromusr、SenderWxid）
-        quoted_sender = quote_info.get("chatusr") or quote_info.get("fromusr") or quote_info.get("SenderWxid") or message.get("SenderWxid")
-        logger.info(f"handle_quote: 引用图片的发送者wxid={quoted_sender}, group_id={message.get('FromWxid')}, sender={message.get('SenderWxid')}, is_quoted_image={is_quoted_image}, content='{content}'")
-
-        # 群聊
-        if message["IsGroup"]:
-            group_id = message["FromWxid"]
-            user_wxid = message["SenderWxid"]
-            is_at = self.is_at_message(message, self.robot_names)
-            is_at_bot = False
-            if content.startswith('@'):
-                for robot_name in self.robot_names:
-                    if content.startswith(f'@{robot_name}'):
-                        is_at_bot = True
-                        break
-            if is_at and is_at_bot and is_quoted_image and content:
-                # 去掉@机器人名
-                query = content
-                for robot_name in self.robot_names:
-                    if query.startswith(f'@{robot_name}'):
-                        query = query[len(f'@{robot_name}') :].strip()
-                # 优先用引用图片的发送者wxid取缓存
-                image_content = await self.get_cached_image(quoted_sender)
-                logger.info(f"handle_quote: 用 quoted_sender 命中图片缓存={image_content is not None}")
-                if not image_content:
-                    image_content = await self.get_cached_image(group_id)
-                    logger.info(f"handle_quote: 用 group_id 命中图片缓存={image_content is not None}")
-                if not image_content:
-                    image_content = await self.get_cached_image(user_wxid)
-                    logger.info(f"handle_quote: 用 SenderWxid 命中图片缓存={image_content is not None}")
-                if image_content:
-                    base64_img = self.encode_image_to_base64(image_content)
-                    await self.handle_vision_image(base64_img, query, bot, message)
-                    return False
-        # 私聊
-        elif is_quoted_image and content:
-            image_content = await self.get_cached_image(quoted_sender)
-            logger.info(f"handle_quote: 用 quoted_sender 命中图片缓存={image_content is not None}")
-            if not image_content:
-                image_content = await self.get_cached_image(message["FromWxid"])
-                logger.info(f"handle_quote: 用 FromWxid 命中图片缓存={image_content is not None}")
-            if not image_content:
-                image_content = await self.get_cached_image(message["SenderWxid"])
-                logger.info(f"handle_quote: 用 SenderWxid 命中图片缓存={image_content is not None}")
-            if image_content:
-                base64_img = self.encode_image_to_base64(image_content)
-                await self.handle_vision_image(base64_img, content, bot, message)
-                return False
-
-        # 其他情况走原有 dify 流程
         if not content:
             query = f"请回复这条消息: '{quoted_content}'"
         else:
             query = f"{content} (引用消息: '{quoted_content}')"
         await self.dify(bot, message, query)
         return False
-
-    @on_image_message(priority=20)
-    async def handle_image(self, bot, message: dict):
-        try:
-            msg_id = message.get("MsgId")
-            from_wxid = message.get("FromWxid")
-            sender_wxid = message.get("SenderWxid")
-            xml_content = message.get("Content")
-            logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(xml_content)}")
-            logger.info(f"handle_image: xml_content={xml_content[:100] if xml_content else None}")
-
-            # 消息ID去重保护（提前return）
-            if not msg_id:
-                logger.warning("handle_image: 未获取到消息ID，跳过处理")
-                return
-            if msg_id in self.image_msgid_cache:
-                logger.info(f"handle_image: 消息ID {msg_id} 已处理过，跳过重复处理")
-                return
-
-            # 解析图片XML，获取图片大小
-            length = None
-            if isinstance(xml_content, str) and "<img " in xml_content:
-                import xml.etree.ElementTree as ET
-                try:
-                    root = ET.fromstring(xml_content)
-                    img_elem = root.find("img")
-                    if img_elem is not None:
-                        length = int(img_elem.get("length", "0"))
-                        logger.info(f"解析图片XML成功: length={length}")
-                except Exception as e:
-                    logger.warning(f"解析图片XML失败: {e}")
-
-            # 分段下载图片
-            image_bytes = b""
-            if length and msg_id:
-                chunk_size = 65536
-                chunks = (length + chunk_size - 1) // chunk_size
-                logger.info(f"开始分段下载图片，总大小: {length} 字节，分 {chunks} 段下载")
-                for i in range(chunks):
-                    start_pos = i * chunk_size
-                    try:
-                        chunk = await bot.get_msg_image(msg_id, from_wxid, length, start_pos=start_pos)
-                        if chunk:
-                            image_bytes += chunk
-                            logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk)} 字节")
-                        else:
-                            logger.error(f"第 {i+1}/{chunks} 段下载失败，数据为空")
-                    except Exception as e:
-                        logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
-                logger.info(f"分段下载图片成功，总大小: {len(image_bytes)} 字节")
-            else:
-                logger.warning("未能获取图片长度或消息ID，无法分段下载图片")
-
-            logger.info(f"handle_image: 下载后 image_bytes 类型={type(image_bytes)}, 长度={len(image_bytes)}")
-
-            # 校验图片有效性
-            if image_bytes and len(image_bytes) > 0:
-                try:
-                    Image.open(io.BytesIO(image_bytes))
-                    logger.info(f"图片校验通过，准备写入缓存，大小: {len(image_bytes)} 字节")
-                    # 缓存图片
-                    self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
-                    if from_wxid != sender_wxid:
-                        self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
-                    logger.info(f"图片缓存: sender_wxid={sender_wxid}, from_wxid={from_wxid}, 大小={len(image_bytes)}")
-                    logger.info(f"当前图片缓存keys: {list(self.image_cache.keys())}")
-                except Exception as e:
-                    logger.error(f"图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
-            else:
-                logger.warning("未能获取到有效的图片数据，未缓存")
-
-            # 无论是否缓存，最后都加到去重集合
-            self.image_msgid_cache.add(msg_id)
-            logger.info(f"handle_image流程结束: MsgId={msg_id}")
-        except Exception as e:
-            logger.error(f"handle_image: 处理图片消息异常: {e}")
 
     async def dify(self, bot, message: dict, query: str):
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
@@ -385,53 +237,3 @@ class Dify(PluginBase):
             for paragraph in paragraphs:
                 if paragraph.strip():
                     await bot.send_text_message(message["FromWxid"], paragraph.strip())
-
-    def encode_image_to_base64(self, image_bytes):
-        return base64.b64encode(image_bytes).decode('utf-8')
-
-    async def get_cached_image(self, user_wxid: str):
-        """获取用户最近的图片，仿原有逻辑"""
-        logger.info(f"尝试获取图片缓存: key={user_wxid}, 当前缓存keys={list(self.image_cache.keys())}")
-        cache = self.image_cache.get(user_wxid)
-        if cache:
-            if time.time() - cache["timestamp"] <= self.image_cache_timeout:
-                return cache["content"]
-            else:
-                del self.image_cache[user_wxid]
-        return None
-
-    async def handle_vision_image(self, base64_image, prompt, bot, message):
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.vision_api_key}"
-        }
-        payload = {
-            "model": self.vision_model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ]
-        }
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.vision_api_base}/chat/completions", headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        response_json = await resp.json()
-                        if "choices" in response_json and len(response_json["choices"]) > 0:
-                            first_choice = response_json["choices"][0]
-                            if "message" in first_choice and "content" in first_choice["message"]:
-                                reply_content = first_choice["message"]["content"].strip()
-                            else:
-                                reply_content = "Content not found in the OpenAI API response"
-                        else:
-                            reply_content = "No choices available in the OpenAI API response"
-                    else:
-                        reply_content = f"识图API请求失败: {resp.status}"
-        except Exception as e:
-            reply_content = f"识图API调用异常: {e}"
-        await bot.send_text_message(message["FromWxid"], reply_content)
