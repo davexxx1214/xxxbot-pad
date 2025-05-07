@@ -113,6 +113,7 @@ class Dify(PluginBase):
                             self.image_cache[message["SenderWxid"]] = {"content": image_bytes, "timestamp": time.time()}
                             if message["FromWxid"] != message["SenderWxid"]:
                                 self.image_cache[message["FromWxid"]] = {"content": image_bytes, "timestamp": time.time()}
+                            logger.info(f"图片缓存: sender_wxid={message['SenderWxid']}, from_wxid={message['FromWxid']}, 大小={len(image_bytes)}")
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
@@ -202,6 +203,7 @@ class Dify(PluginBase):
 
         # 获取引用图片的发送者wxid（优先 chatusr、fromusr、SenderWxid）
         quoted_sender = quote_info.get("chatusr") or quote_info.get("fromusr") or quote_info.get("SenderWxid") or message.get("SenderWxid")
+        logger.info(f"handle_quote: 引用图片的发送者wxid={quoted_sender}, group_id={message.get('FromWxid')}, sender={message.get('SenderWxid')}, is_quoted_image={is_quoted_image}, content='{content}'")
 
         # 群聊
         if message["IsGroup"]:
@@ -219,12 +221,16 @@ class Dify(PluginBase):
                 query = content
                 for robot_name in self.robot_names:
                     if query.startswith(f'@{robot_name}'):
-                        query = query[len(f'@{robot_name}'):].strip()
+                        query = query[len(f'@{robot_name}') :].strip()
                 # 优先用引用图片的发送者wxid取缓存
                 image_content = await self.get_cached_image(quoted_sender)
+                logger.info(f"handle_quote: 用 quoted_sender 命中图片缓存={image_content is not None}")
                 if not image_content:
-                    # 兜底用 group_id
                     image_content = await self.get_cached_image(group_id)
+                    logger.info(f"handle_quote: 用 group_id 命中图片缓存={image_content is not None}")
+                if not image_content:
+                    image_content = await self.get_cached_image(user_wxid)
+                    logger.info(f"handle_quote: 用 SenderWxid 命中图片缓存={image_content is not None}")
                 if image_content:
                     base64_img = self.encode_image_to_base64(image_content)
                     await self.handle_vision_image(base64_img, query, bot, message)
@@ -232,8 +238,13 @@ class Dify(PluginBase):
         # 私聊
         elif is_quoted_image and content:
             image_content = await self.get_cached_image(quoted_sender)
+            logger.info(f"handle_quote: 用 quoted_sender 命中图片缓存={image_content is not None}")
             if not image_content:
                 image_content = await self.get_cached_image(message["FromWxid"])
+                logger.info(f"handle_quote: 用 FromWxid 命中图片缓存={image_content is not None}")
+            if not image_content:
+                image_content = await self.get_cached_image(message["SenderWxid"])
+                logger.info(f"handle_quote: 用 SenderWxid 命中图片缓存={image_content is not None}")
             if image_content:
                 base64_img = self.encode_image_to_base64(image_content)
                 await self.handle_vision_image(base64_img, content, bot, message)
@@ -302,6 +313,7 @@ class Dify(PluginBase):
 
     async def get_cached_image(self, user_wxid: str):
         """获取用户最近的图片，仿原有逻辑"""
+        logger.info(f"尝试获取图片缓存: key={user_wxid}, 当前缓存keys={list(self.image_cache.keys())}")
         cache = self.image_cache.get(user_wxid)
         if cache:
             if time.time() - cache["timestamp"] <= self.image_cache_timeout:
