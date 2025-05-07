@@ -11,6 +11,7 @@ from utils.plugin_base import PluginBase
 import traceback
 from PIL import Image
 import base64
+from utils.decorators import on_text_message, on_at_message, on_quote_message
 
 # 只保留必要的常量
 DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
