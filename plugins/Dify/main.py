@@ -318,7 +318,7 @@ class Dify(PluginBase):
             if image_bytes and len(image_bytes) > 0:
                 try:
                     Image.open(io.BytesIO(image_bytes))
-                    logger.info(f"图片校验成功，准备缓存，大小: {len(image_bytes)} 字节")
+                    logger.info(f"图片校验通过，准备写入缓存，大小: {len(image_bytes)} 字节")
                     # 缓存图片
                     self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
                     if from_wxid != sender_wxid:
@@ -332,6 +332,7 @@ class Dify(PluginBase):
 
             # 无论是否缓存，最后都加到去重集合
             self.image_msgid_cache.add(msg_id)
+            logger.info(f"handle_image流程结束: MsgId={msg_id}")
         except Exception as e:
             logger.error(f"handle_image: 处理图片消息异常: {e}")
 
