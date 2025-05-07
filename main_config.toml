@@ -3,7 +3,7 @@
 version = "855"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
 
 [Framework]
-type = "dual"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
+type = "dow"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
 
 [WechatAPIServer]
 host = "127.0.0.1"         # WechatAPI服务器地址，默认127.0.0.1，可修改为其他地址
