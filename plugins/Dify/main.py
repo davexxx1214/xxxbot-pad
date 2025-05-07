@@ -109,6 +109,10 @@ class Dify(PluginBase):
                             await bot.send_image_message(message["FromWxid"], image_bytes)
                             if message["IsGroup"]:
                                 await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [message["SenderWxid"]])
+                            # 在 handle_image 里
+                            self.image_cache[message["SenderWxid"]] = {"content": image_bytes, "timestamp": time.time()}
+                            if message["FromWxid"] != message["SenderWxid"]:
+                                self.image_cache[message["FromWxid"]] = {"content": image_bytes, "timestamp": time.time()}
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
@@ -196,6 +200,9 @@ class Dify(PluginBase):
         if not is_quoted_image and "img" in quoted_content:
             is_quoted_image = True
 
+        # 获取引用图片的发送者wxid（优先 chatusr、fromusr、SenderWxid）
+        quoted_sender = quote_info.get("chatusr") or quote_info.get("fromusr") or quote_info.get("SenderWxid") or message.get("SenderWxid")
+
         # 群聊
         if message["IsGroup"]:
             group_id = message["FromWxid"]
@@ -213,14 +220,20 @@ class Dify(PluginBase):
                 for robot_name in self.robot_names:
                     if query.startswith(f'@{robot_name}'):
                         query = query[len(f'@{robot_name}'):].strip()
-                image_content = await self.get_cached_image(group_id)
+                # 优先用引用图片的发送者wxid取缓存
+                image_content = await self.get_cached_image(quoted_sender)
+                if not image_content:
+                    # 兜底用 group_id
+                    image_content = await self.get_cached_image(group_id)
                 if image_content:
                     base64_img = self.encode_image_to_base64(image_content)
                     await self.handle_vision_image(base64_img, query, bot, message)
                     return False
         # 私聊
         elif is_quoted_image and content:
-            image_content = await self.get_cached_image(message["FromWxid"])
+            image_content = await self.get_cached_image(quoted_sender)
+            if not image_content:
+                image_content = await self.get_cached_image(message["FromWxid"])
             if image_content:
                 base64_img = self.encode_image_to_base64(image_content)
                 await self.handle_vision_image(base64_img, content, bot, message)
