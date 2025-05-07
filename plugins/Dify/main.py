@@ -266,7 +266,10 @@ class Dify(PluginBase):
             msg_id = message.get("MsgId")
             from_wxid = message.get("FromWxid")
             sender_wxid = message.get("SenderWxid")
-            logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(message.get('Content'))}")
+            xml_content = message.get("Content")
+            logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(xml_content)}")
+            logger.info(f"handle_image: xml_content={xml_content[:100] if xml_content else None}")
+
             # 消息ID去重保护
             if not msg_id:
                 logger.warning("handle_image: 未获取到消息ID，跳过处理")
@@ -276,7 +279,6 @@ class Dify(PluginBase):
                 return
 
             # 解析图片XML，获取图片大小
-            xml_content = message.get("Content")
             length = None
             if isinstance(xml_content, str) and "<img " in xml_content:
                 import xml.etree.ElementTree as ET
@@ -310,8 +312,10 @@ class Dify(PluginBase):
             else:
                 logger.warning("未能获取图片长度或消息ID，无法分段下载图片")
 
+            logger.info(f"handle_image: 下载后 image_bytes 类型={type(image_bytes)}, 长度={len(image_bytes)}")
+
             # 校验图片有效性
-            if image_bytes:
+            if image_bytes and len(image_bytes) > 0:
                 try:
                     Image.open(io.BytesIO(image_bytes))
                     logger.info(f"图片校验成功，准备缓存，大小: {len(image_bytes)} 字节")
@@ -322,7 +326,7 @@ class Dify(PluginBase):
                 logger.warning("未能获取到有效的图片数据，未缓存")
 
             # 缓存图片
-            if image_bytes:
+            if image_bytes and len(image_bytes) > 0:
                 self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
                 if from_wxid != sender_wxid:
                     self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
