@@ -517,7 +517,7 @@ class stability(Plugin):
                     
                     # 发送编辑后的图像
                     rt = ReplyType.IMAGE
-                    image = self.img_to_png(imgpath)
+                    image = imgpath
                     
                     if image is False:
                         rc = "多图编辑失败"
@@ -631,15 +631,15 @@ class stability(Plugin):
                     
                     # 使用保存的图片
                     rt = ReplyType.IMAGE
-                    image = self.img_to_png(imgpath)
+                    image = imgpath
                     if image is False:
                         # 如果转换失败，尝试直接使用BytesIO
                         try:
-                            from io import BytesIO
-                            image = BytesIO(image_data)
-                            image.seek(0)
+                            # from io import BytesIO
+                            # image = BytesIO(image_data)
+                            # image.seek(0)
                             rt = ReplyType.IMAGE
-                            rc = image
+                            rc = imgpath
                         except Exception as e:
                             logger.error(f"Failed to use BytesIO: {e}")
                             rc = "处理图片失败"
@@ -744,7 +744,7 @@ class stability(Plugin):
                     
                     # 发送编辑后的图像
                     rt = ReplyType.IMAGE
-                    image = self.img_to_png(imgpath)
+                    image = imgpath
                     
                     if image is False:
                         rc = "处理图片失败"
@@ -825,7 +825,7 @@ class stability(Plugin):
             
             rt = ReplyType.IMAGE
 
-            image = self.img_to_png(imgpath)
+            image = imgpath
             if image is False:
                 rc= "服务暂不可用"
                 rt = ReplyType.TEXT
@@ -969,7 +969,7 @@ class stability(Plugin):
             
             rt = ReplyType.IMAGE
 
-            image = self.img_to_png(imgpath)
+            image = imgpath
             if image is False:
                 rc= "服务暂不可用"
                 rt = ReplyType.TEXT
@@ -1015,7 +1015,7 @@ class stability(Plugin):
             
             rt = ReplyType.IMAGE
 
-            image = self.img_to_png(imgpath)
+            image = imgpath
             if image is False:
                 rc= "服务暂不可用"
                 rt = ReplyType.TEXT
@@ -1064,7 +1064,7 @@ class stability(Plugin):
             
             rt = ReplyType.IMAGE
 
-            image = self.img_to_png(imgpath)
+            image = imgpath
             if image is False:
                 rc= "服务暂不可用"
                 rt = ReplyType.TEXT
@@ -1111,7 +1111,7 @@ class stability(Plugin):
             
             rt = ReplyType.IMAGE
 
-            image = self.img_to_png(imgpath)
+            image = imgpath
             if image is False:
                 rc= "服务暂不可用"
                 rt = ReplyType.TEXT
