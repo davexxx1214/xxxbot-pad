@@ -270,7 +270,7 @@ class Dify(PluginBase):
             logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(xml_content)}")
             logger.info(f"handle_image: xml_content={xml_content[:100] if xml_content else None}")
 
-            # 消息ID去重保护
+            # 消息ID去重保护（提前return）
             if not msg_id:
                 logger.warning("handle_image: 未获取到消息ID，跳过处理")
                 return
@@ -319,21 +319,19 @@ class Dify(PluginBase):
                 try:
                     Image.open(io.BytesIO(image_bytes))
                     logger.info(f"图片校验成功，准备缓存，大小: {len(image_bytes)} 字节")
+                    # 缓存图片
+                    self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
+                    if from_wxid != sender_wxid:
+                        self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
+                    logger.info(f"图片缓存: sender_wxid={sender_wxid}, from_wxid={from_wxid}, 大小={len(image_bytes)}")
+                    logger.info(f"当前图片缓存keys: {list(self.image_cache.keys())}")
                 except Exception as e:
-                    logger.error(f"图片校验失败: {e}")
-                    image_bytes = None
+                    logger.error(f"图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
             else:
                 logger.warning("未能获取到有效的图片数据，未缓存")
 
-            # 缓存图片
-            if image_bytes and len(image_bytes) > 0:
-                self.image_cache[sender_wxid] = {"content": image_bytes, "timestamp": time.time()}
-                if from_wxid != sender_wxid:
-                    self.image_cache[from_wxid] = {"content": image_bytes, "timestamp": time.time()}
-                logger.info(f"图片缓存: sender_wxid={sender_wxid}, from_wxid={from_wxid}, 大小={len(image_bytes)}")
-                self.image_msgid_cache.add(msg_id)
-            else:
-                logger.warning("handle_image: 未能缓存图片，因为图片数据无效")
+            # 无论是否缓存，最后都加到去重集合
+            self.image_msgid_cache.add(msg_id)
         except Exception as e:
             logger.error(f"handle_image: 处理图片消息异常: {e}")
 
