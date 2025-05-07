@@ -105,7 +105,7 @@ restartContent = "系统已于 <span style=\"color:#1e90ff;font-weight:bold;\">{
 # 消息回调设置
 [Callback]
 enabled = true                      # 是否启用回调功能
-path = "python wx849_callback_sender.py"  # 回调脚本路径，根据Python安装位置可能需要调整
+path = "python3 wx849_log_callback.py"  # 回调脚本路径，根据Python安装位置可能需要调整
 delay = 0                           # 回调延迟（毫秒），通常设为0
 mode = "all"                        # 回调模式：all=所有消息，filter=仅指定类型
 
