@@ -260,12 +260,11 @@ class Dify(PluginBase):
 
     @on_image_message(priority=20)
     async def handle_image(self, bot, message: dict):
-        """处理图片消息并缓存图片内容"""
         try:
             msg_id = message.get("MsgId")
             from_wxid = message.get("FromWxid")
             sender_wxid = message.get("SenderWxid")
-            logger.info(f"收到图片消息: 消息ID:{msg_id} 来自:{from_wxid} 发送人:{sender_wxid}")
+            logger.info(f"handle_image called: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(message.get('Content'))}")
 
             # 解析图片XML，获取图片大小
             xml_content = message.get("Content")
