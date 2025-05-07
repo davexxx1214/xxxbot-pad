@@ -185,9 +185,17 @@ class Dify(PluginBase):
     async def handle_quote(self, bot, message: dict):
         if not self.enable:
             return
+
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
         quoted_content = quote_info.get("Content", "")
+        quoted_msgtype = quote_info.get("MsgType", None)
+
+        # 判断引用的是否为图片消息
+        is_quoted_image = quoted_msgtype == 3
+        if not is_quoted_image and "img" in quoted_content:
+            is_quoted_image = True
+
         # 群聊
         if message["IsGroup"]:
             group_id = message["FromWxid"]
@@ -199,38 +207,32 @@ class Dify(PluginBase):
                     if content.startswith(f'@{robot_name}'):
                         is_at_bot = True
                         break
-            if is_at and is_at_bot:
+            if is_at and is_at_bot and is_quoted_image and content:
                 # 去掉@机器人名
                 query = content
                 for robot_name in self.robot_names:
                     if query.startswith(f'@{robot_name}'):
                         query = query[len(f'@{robot_name}'):].strip()
                 image_content = await self.get_cached_image(group_id)
-                if image_content and query:
+                if image_content:
                     base64_img = self.encode_image_to_base64(image_content)
                     await self.handle_vision_image(base64_img, query, bot, message)
                     return False
-                # 否则走原有流程
-                if not query:
-                    query = f"请回复这条消息: '{quoted_content}'"
-                else:
-                    query = f"{query} (引用消息: '{quoted_content}')"
-                await self.dify(bot, message, query)
-                return False
         # 私聊
-        else:
-            user_wxid = message["SenderWxid"]
+        elif is_quoted_image and content:
             image_content = await self.get_cached_image(message["FromWxid"])
-            if image_content and content:
+            if image_content:
                 base64_img = self.encode_image_to_base64(image_content)
                 await self.handle_vision_image(base64_img, content, bot, message)
                 return False
-            if not content:
-                query = f"请回复这条消息: '{quoted_content}'"
-            else:
-                query = f"{content} (引用消息: '{quoted_content}')"
-            await self.dify(bot, message, query)
-            return False
+
+        # 其他情况走原有 dify 流程
+        if not content:
+            query = f"请回复这条消息: '{quoted_content}'"
+        else:
+            query = f"{content} (引用消息: '{quoted_content}')"
+        await self.dify(bot, message, query)
+        return False
 
     async def dify(self, bot, message: dict, query: str):
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
