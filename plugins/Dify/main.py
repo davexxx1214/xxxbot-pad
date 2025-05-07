@@ -11,7 +11,7 @@ from utils.plugin_base import PluginBase
 import traceback
 from PIL import Image
 import base64
-from utils.decorators import on_text_message, on_at_message, on_quote_message
+from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
 
 # 只保留必要的常量
 DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
@@ -257,6 +257,15 @@ class Dify(PluginBase):
             query = f"{content} (引用消息: '{quoted_content}')"
         await self.dify(bot, message, query)
         return False
+
+    @on_image_message(priority=20)
+    async def handle_image(self, bot, message: dict):
+        # ... 你的图片解析和下载逻辑 ...
+        # image_bytes = ... # 你的图片二进制内容
+        self.image_cache[message["SenderWxid"]] = {"content": image_bytes, "timestamp": time.time()}
+        if message["FromWxid"] != message["SenderWxid"]:
+            self.image_cache[message["FromWxid"]] = {"content": image_bytes, "timestamp": time.time()}
+        logger.info(f"图片缓存: sender_wxid={message['SenderWxid']}, from_wxid={message['FromWxid']}, 大小={len(image_bytes)}")
 
     async def dify(self, bot, message: dict, query: str):
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
