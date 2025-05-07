@@ -58,7 +58,7 @@ class Sum4all(PluginBase):
         else:
             return message["SenderWxid"]
 
-    @on_text_message(priority=10)
+    @on_text_message(priority=30)
     async def handle_text(self, bot, message: dict):
         if not self.enable:
             return True
@@ -87,7 +87,7 @@ class Sum4all(PluginBase):
             return False  # 阻止后续插件处理
         return True  # 允许后续插件处理
 
-    @on_image_message(priority=10)
+    @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
         if not self.enable:
             return True
