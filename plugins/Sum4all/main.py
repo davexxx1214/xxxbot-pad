@@ -65,13 +65,11 @@ class Sum4all(PluginBase):
         content = message["Content"].strip()
         if not content:
             return
-        # 单聊 或 群聊@机器人
         is_trigger = False
         if not message["IsGroup"]:
             if content.startswith(self.vision_prefix):
                 is_trigger = True
         elif self.is_at_message(message):
-            # 去掉@机器人名
             for robot_name in self.robot_names:
                 if content.startswith(f'@{robot_name}'):
                     content = content[len(f'@{robot_name}'):].strip()
@@ -86,6 +84,7 @@ class Sum4all(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
+            return True
 
     @on_image_message(priority=10)
     async def handle_image(self, bot, message: dict):
@@ -96,6 +95,10 @@ class Sum4all(PluginBase):
         sender_wxid = message.get("SenderWxid")
         xml_content = message.get("Content")
         logger.info(f"Sum4all: 收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}")
+        # 只处理xml格式的图片消息
+        if not (isinstance(xml_content, str) and "<img " in xml_content):
+            logger.info("Sum4all: 非xml格式图片消息，跳过")
+            return
         # 消息ID去重
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
