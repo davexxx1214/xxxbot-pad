@@ -4,6 +4,7 @@ import os
 import mimetypes
 import threading
 import json
+import re
 
 
 import requests
@@ -271,10 +272,11 @@ class DifyBot(Bot):
             logger.debug("[DIFY] usage {}".format(rsp_data.get('metadata', {}).get('usage', 0)))
 
             answer = rsp_data['answer']
-            
+            formatted_answer = self._format_dify_answer(answer)
+
             # 直接使用answer作为回复内容，不进行markdown解析
             # 不在这里添加@前缀，让gewechat_channel处理
-            reply = Reply(ReplyType.TEXT, answer)
+            reply = Reply(ReplyType.TEXT, formatted_answer)
             
             # 设置dify conversation_id, 依靠dify管理上下文
             if session.get_conversation_id() == '':
@@ -373,7 +375,25 @@ class DifyBot(Bot):
             # 如果故障转移也失败，记录错误并返回默认错误消息
             logger.exception(f"[DIFY] Failover failed: {failover_e}")
             return None, UNKNOWN_ERROR_MSG
-
+        
+    def _format_dify_answer(self, text: str) -> str:
+        """
+        移除文本中所有的 '#' 和 '*' 符号以及特定的HTML标签，但保留<think>标签
+        """
+        # 将<details>标签转换为<think>标签，并确保</think>后有换行
+        text = re.sub(r'<details.*?>(.*?)<summary>.*?</summary>(.*?)</details>', r'<think>\1\2</think>\n', text, flags=re.DOTALL)
+        
+        # 移除只包含空白字符的<think>标签
+        text = re.sub(r'<think>\s*</think>\n?', '', text)
+        
+        # 移除其他HTML标签，但保留<think>标签
+        text = re.sub(r'<(?!/?think\b)[^>]*>', '', text)
+        
+        # 再移除Markdown标记
+        text = re.sub(r'[#\*]', '', text)
+        
+        # 确保不会有多余的空行在开头
+        return text.strip()
 
     def _download_file(self, url):
         try:
