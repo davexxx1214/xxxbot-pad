@@ -155,6 +155,8 @@ class Dify(PluginBase):
                 return
             await self.dify(bot, message, query)
         # 其他群聊消息不处理
+        logger.info(f"content: {content}, query: {query}")
+        logger.info(f"robot_names: {self.robot_names}")
 
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
