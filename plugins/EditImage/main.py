@@ -48,7 +48,7 @@ class EditImage(PluginBase):
         content = message.get("Content", "")
         logger.info(f"EditImage is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
-            if re.match(f"^@{robot_name}[\\s\\u2000-\\u200F\\u3000]*", content):
+            if re.match(f"^@{robot_name}[\\s\\u2000-\\u206F\\u3000-\\u303F]*", content):
                 return True
         return False
 
@@ -73,9 +73,11 @@ class EditImage(PluginBase):
                 user_prompt = content[len(self.edit_image_prefix):].strip()
         elif self.is_at_message(message):
             for robot_name in self.robot_names:
-                content = re.sub(f"@{robot_name}[\\s\\u2000-\\u200F\\u3000]*", "", content)
+                # 去除@名字和后面所有空白字符（包括各种不可见空格）
+                content = re.sub(f"@{robot_name}[\\s\\u2000-\\u206F\\u3000-\\u303F]*", "", content)
             logger.info(f"EditImage 群聊@消息处理后内容: {repr(content)}")
-            content = content.lstrip()
+            # 再次用正则去除所有前缀不可见字符
+            content = re.sub(r"^[\\s\\u2000-\\u206F\\u3000-\\u303F]+", "", content)
             if content.startswith(self.edit_image_prefix):
                 is_trigger = True
                 user_prompt = content[len(self.edit_image_prefix):].strip()
