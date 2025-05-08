@@ -188,6 +188,9 @@ class Dify(PluginBase):
     async def handle_quote(self, bot, message: dict):
         if not self.enable:
             return
+        # 只在群聊且@了机器人时才处理
+        if message.get("IsGroup") and not self.is_at_message(message, self.robot_names):
+            return False
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
         quoted_content = quote_info.get("Content", "")
@@ -246,4 +249,12 @@ class Dify(PluginBase):
             paragraphs = text.split("//n")
             for paragraph in paragraphs:
                 if paragraph.strip():
-                    await bot.send_text_message(message["FromWxid"], paragraph.strip())
+                    if message.get("IsGroup"):
+                        # 群聊中@发消息的人
+                        await bot.send_at_message(
+                            message["FromWxid"],
+                            "\n" + paragraph.strip(),
+                            [message["SenderWxid"]]
+                        )
+                    else:
+                        await bot.send_text_message(message["FromWxid"], paragraph.strip())
