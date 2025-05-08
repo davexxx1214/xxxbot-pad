@@ -145,7 +145,9 @@ class Dify(PluginBase):
         if self.is_at_message(message, self.robot_names):
             query = content
             for robot_name in self.robot_names:
-                query = query.replace(f"@{robot_name}", "").strip()
+                # 去除@名字和后面所有空白字符（包括特殊空格）
+                query = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", query)
+            query = query.lstrip()
             if query.startswith("画") and self.image_generation_enabled:
                 prompt = query[len("画"):].strip()
                 if prompt:
@@ -165,7 +167,9 @@ class Dify(PluginBase):
         content = message["Content"].strip()
         query = content
         for robot_name in self.robot_names:
-            query = query.replace(f"@{robot_name}", "").strip()
+            # 去除@名字和后面所有空白字符（包括特殊空格）
+            query = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", query)
+        query = query.lstrip()
         if query.startswith("画") and self.image_generation_enabled:
             prompt = query[len("画"):].strip()
             if prompt:

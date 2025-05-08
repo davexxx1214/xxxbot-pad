@@ -70,9 +70,11 @@ class Sum4all(PluginBase):
             if content.startswith(self.vision_prefix):
                 is_trigger = True
         elif self.is_at_message(message):
+            import re
             for robot_name in self.robot_names:
-                if content.startswith(f'@{robot_name}'):
-                    content = content[len(f'@{robot_name}'):].strip()
+                # 去除@名字和后面所有空白字符（包括特殊空格）
+                content = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", content)
+            content = content.lstrip()
             if content.startswith(self.vision_prefix):
                 is_trigger = True
         if is_trigger:
