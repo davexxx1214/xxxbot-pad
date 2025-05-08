@@ -72,7 +72,7 @@ if ! screen -list | grep -q "wxbot_main"; then
     screen -dmS wxbot_main bash -c '
         cd "'$SCRIPT_DIR'" || { echo "Main directory not found"; exit 1; }
         echo "Starting main application..."
-        python3 main.py
+        python3 main.py | tee main.log
         echo "Main application exited. Press Enter to close this window."
         read
     '
