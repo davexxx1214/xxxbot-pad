@@ -41,7 +41,7 @@ check_and_stop_session() {
 
 # Stop services in reverse order
 echo "Stopping main application..."
-check_and_stop_session "wxbot_main"
+#check_and_stop_session "wxbot_main"
 
 echo "Stopping PAD service..."
 check_and_stop_session "pad_service"
@@ -50,7 +50,7 @@ echo "Stopping Redis server..."
 check_and_stop_session "redis_service"
 
 # Check if any related screen sessions still exist
-REMAINING=$(screen -list | grep -E 'redis_service|pad_service|wxbot_main' | wc -l)
+REMAINING=$(screen -list | grep -E 'redis_service|pad_service' | wc -l)
 
 if [ "$REMAINING" -gt 0 ]; then
     echo "Warning: Some sessions may still be running. Check with 'screen -ls'"

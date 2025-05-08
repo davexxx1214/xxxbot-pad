@@ -67,19 +67,19 @@ fi
 sleep 2
 
 # Start main application in screen
-if ! screen -list | grep -q "wxbot_main"; then
-    echo "Creating main application screen session..."
-    screen -dmS wxbot_main bash -c '
-        cd "'$SCRIPT_DIR'" || { echo "Main directory not found"; exit 1; }
-        echo "Starting main application..."
-        python3 main.py | tee main.log
-        echo "Main application exited. Press Enter to close this window."
-        read
-    '
-    echo "Main application started in screen session 'wxbot_main'"
-else
-    echo "Main app screen session already exists, skipping..."
-fi
+#if ! screen -list | grep -q "wxbot_main"; then
+#    echo "Creating main application screen session..."
+#    screen -dmS wxbot_main bash -c '
+#        cd "'$SCRIPT_DIR'" || { echo "Main directory not found"; exit 1; }
+#        echo "Starting main application..."
+#        python3 main.py | tee main.log
+#        echo "Main application exited. Press Enter to close this window."
+#        read
+#    '
+#    echo "Main application started in screen session 'wxbot_main'"
+#else
+#    echo "Main app screen session already exists, skipping..."
+#fi
 
 echo "[$(date)] Script execution completed" >> "$LOG_FILE"
 echo ""

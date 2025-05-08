@@ -55,6 +55,7 @@ class Dify(PluginBase):
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
+        logger.info(f"is_at_message: content repr={repr(content)} robot_names={robot_names}")
         if robot_names:
             for robot_name in robot_names:
                 # 匹配@名字后可以有任意空白字符
