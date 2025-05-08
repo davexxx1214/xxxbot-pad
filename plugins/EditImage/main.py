@@ -221,7 +221,8 @@ class EditImage(PluginBase):
                             image_bytes = base64.b64decode(image_data["b64_json"])
                             # 直接发送图片字节
                             if message["IsGroup"]:
-                                await bot.send_image_message(message["FromWxid"], image_bytes, at_list=[message["SenderWxid"]])
+                                await bot.send_image_message(message["FromWxid"], image_bytes)
+                                await bot.send_at_message(message["FromWxid"], "🖼️ 您的图片已编辑完成！", [message["SenderWxid"]])
                             else:
                                 await bot.send_image_message(message["FromWxid"], image_bytes)
                         else:
