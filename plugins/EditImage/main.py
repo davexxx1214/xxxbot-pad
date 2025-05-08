@@ -217,15 +217,11 @@ class EditImage(PluginBase):
                         image_data = result["data"][0]
                         if "b64_json" in image_data and image_data["b64_json"]:
                             image_bytes = base64.b64decode(image_data["b64_json"])
-                            # 再保存到临时文件
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as out_file:
-                                out_file.write(image_bytes)
-                                out_file_path = out_file.name
-                            # 发送图片
+                            # 直接发送图片字节
                             if message["IsGroup"]:
-                                await bot.send_image_message(message["FromWxid"], out_file_path, at_list=[message["SenderWxid"]])
+                                await bot.send_image_message(message["FromWxid"], image_bytes, at_list=[message["SenderWxid"]])
                             else:
-                                await bot.send_image_message(message["FromWxid"], out_file_path)
+                                await bot.send_image_message(message["FromWxid"], image_bytes)
                         else:
                             error_message = "图片编辑失败，API没有返回图片数据"
                             if message["IsGroup"]:
