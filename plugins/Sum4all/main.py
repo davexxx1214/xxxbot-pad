@@ -46,8 +46,10 @@ class Sum4all(PluginBase):
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
+        logger.info(f"Sum4all is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
-            if content.startswith(f'@{robot_name}') or f'@{robot_name}' in content:
+            # 匹配@名字后可以有任意空白字符（包括各种不可见空格）
+            if re.match(f"^@{robot_name}[\\s\\u2000-\\u200F\\u3000]*", content):
                 return True
         return False
 
@@ -72,10 +74,10 @@ class Sum4all(PluginBase):
                 is_trigger = True
                 user_prompt = content[len(self.vision_prefix):].strip()
         elif self.is_at_message(message):
-            import re
             for robot_name in self.robot_names:
-                # 去除@名字和后面所有空白字符（包括特殊空格）
-                content = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", content)
+                # 去除@名字和后面所有空白字符（包括各种不可见空格）
+                content = re.sub(f"@{robot_name}[\\s\\u2000-\\u200F\\u3000]*", "", content)
+            logger.info(f"Sum4all 群聊@消息处理后内容: {repr(content)}")
             content = content.lstrip()
             if content.startswith(self.vision_prefix):
                 is_trigger = True
