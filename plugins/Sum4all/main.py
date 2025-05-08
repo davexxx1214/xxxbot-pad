@@ -66,9 +66,11 @@ class Sum4all(PluginBase):
         if not content:
             return True
         is_trigger = False
+        user_prompt = None
         if not message["IsGroup"]:
             if content.startswith(self.vision_prefix):
                 is_trigger = True
+                user_prompt = content[len(self.vision_prefix):].strip()
         elif self.is_at_message(message):
             import re
             for robot_name in self.robot_names:
@@ -77,10 +79,16 @@ class Sum4all(PluginBase):
             content = content.lstrip()
             if content.startswith(self.vision_prefix):
                 is_trigger = True
+                user_prompt = content[len(self.vision_prefix):].strip()
         if is_trigger:
             key = self.get_waiting_key(message)
-            self.waiting_vision[key] = time.time()
-            logger.info(f"Sum4all: 记录待识图状态: {key}")
+            if not user_prompt:
+                user_prompt = "请识别这张图片的内容。"
+            self.waiting_vision[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            logger.info(f"Sum4all: 记录待识图状态: {key}, prompt: {user_prompt}")
             tip = "请发送您要识别的图片。"
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
@@ -103,10 +111,11 @@ class Sum4all(PluginBase):
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
             return True
         key = f"{from_wxid}|{sender_wxid}" if message.get("IsGroup") else sender_wxid
-        if key not in self.waiting_vision:
+        waiting_info = self.waiting_vision.get(key)
+        if not waiting_info:
             logger.info(f"Sum4all: 当前无待识图状态: {key}")
             return True
-
+        user_prompt = waiting_info.get("prompt", "请识别这张图片的内容。")
         image_bytes = b""
         # 1. xml格式，分段下载
         if isinstance(xml_content, str) and "<img " in xml_content:
@@ -151,7 +160,7 @@ class Sum4all(PluginBase):
             try:
                 Image.open(io.BytesIO(image_bytes))
                 logger.info(f"Sum4all: 图片校验通过，准备识图，大小: {len(image_bytes)} 字节")
-                await self.handle_vision_image(image_bytes, bot, message)
+                await self.handle_vision_image(image_bytes, bot, message, user_prompt)
             except Exception as e:
                 logger.error(f"Sum4all: 图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
         else:
@@ -162,13 +171,12 @@ class Sum4all(PluginBase):
         logger.info(f"Sum4all: 识图流程结束: MsgId={msg_id}")
         return False
 
-    async def handle_vision_image(self, image_bytes, bot, message):
+    async def handle_vision_image(self, image_bytes, bot, message, prompt):
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.vision_api_key}"
         }
-        prompt = "请识别这张图片的内容。"
         payload = {
             "model": self.vision_model,
             "messages": [
