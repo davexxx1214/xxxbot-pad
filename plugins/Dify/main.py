@@ -148,7 +148,9 @@ class Dify(PluginBase):
                 # 去除@名字和后面所有空白字符（包括特殊空格）
                 query = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", query)
             query = query.lstrip()
+            logger.info(f"Dify画图分支判断: query={query}, image_generation_enabled={self.image_generation_enabled}")
             if query.startswith("画") and self.image_generation_enabled:
+                logger.info("Dify画图分支已进入")
                 prompt = query[len("画"):].strip()
                 if prompt:
                     await self.generate_openai_image(bot, message, prompt)
