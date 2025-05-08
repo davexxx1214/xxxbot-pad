@@ -57,7 +57,8 @@ class Dify(PluginBase):
         content = message.get("Content", "")
         if robot_names:
             for robot_name in robot_names:
-                if content.startswith(f'@{robot_name}') or f'@{robot_name}' in content:
+                # 匹配@名字后可以有任意空白字符
+                if re.match(f"^@{robot_name}[\\s\\u2005\\u2002\\u2003\\u3000]*", content):
                     return True
         return False
 
