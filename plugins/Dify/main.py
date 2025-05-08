@@ -41,7 +41,7 @@ class Dify(PluginBase):
             self.default_model_api_key = plugin_config["api-key"]
             self.default_model_base_url = plugin_config["base-url"]
             self.http_proxy = plugin_config.get("http-proxy", None)
-            self.robot_names = plugin_config.get("robot-names", [])
+            self.robot_names = plugin_config.get("robot_names", [])
             self.image_generation_enabled = bool(plugin_config.get("openai_image_api_key", None))
             self.openai_image_api_key = plugin_config.get("openai_image_api_key", None)
             self.openai_image_api_base = plugin_config.get("openai_image_api_base", "https://api.openai.com/v1")
