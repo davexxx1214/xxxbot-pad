@@ -49,9 +49,9 @@ class Sum4all(PluginBase):
         content = message.get("Content", "")
         logger.info(f"Sum4all is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
-            # 去除@名字和后面所有空白字符（包括各种不可见空格）
-            content = re.sub(f"@{robot_name}[\\s\\S]*?(?={self.vision_prefix})", "", content)
-        content = content.lstrip()
+            # 匹配@名字后可以有任意空白字符（包括各种不可见空格）
+            if regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content):
+                return True
         return False
 
     def get_waiting_key(self, message: dict):
@@ -77,7 +77,7 @@ class Sum4all(PluginBase):
         elif self.is_at_message(message):
             for robot_name in self.robot_names:
                 # 去除@名字和后面所有空白字符（包括各种不可见空格）
-                content = re.sub(f"@{robot_name}[\\s\\S]*?(?={self.vision_prefix})", "", content)
+                content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
             logger.info(f"Sum4all 群聊@消息处理后内容: {repr(content)}")
             content = content.lstrip()
             if content.startswith(self.vision_prefix):
