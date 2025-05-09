@@ -443,12 +443,10 @@ class ToolMixin(WechatAPIClientBase):
             else:
                 self.error_handler(json_resp)
 
-def download_and_decrypt_wechat_cdn_img(cdn_url, aeskey):
-    # 1. 下载加密图片
-    resp = requests.get(cdn_url)
-    enc_data = resp.content
-
-    # 2. 解密（AES-CTR模式，key=16字节，iv=16字节全0）
+async def async_download_and_decrypt_wechat_cdn_img(cdn_url, aeskey):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(cdn_url) as resp:
+            enc_data = await resp.read()
     key = bytes.fromhex(aeskey)
     cipher = AES.new(key, AES.MODE_CTR, nonce=b'')
     plain_data = cipher.decrypt(enc_data)
