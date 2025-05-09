@@ -27,6 +27,8 @@ class Dify(PluginBase):
         super().__init__()
         # 新增：本地会话ID存储dict
         self._conversation_ids = {}
+        # 新增：本地问题历史存储dict
+        self._question_history = {}
         try:
             with open("main_config.toml", "rb") as f:
                 config = tomllib.load(f)
@@ -204,21 +206,33 @@ class Dify(PluginBase):
         return False
 
     async def dify(self, bot, message: dict, query: str):
-        # 优化：群聊用群ID+SenderWxid，私聊用FromWxid，保证群聊每个人有独立上下文
+        # 新实现：群聊用群ID，私聊用用户ID，整个群为单位存储
         if message.get("IsGroup"):
-            conversation_key = f"group_{message['FromWxid']}_{message['SenderWxid']}"
+            context_key = f"group_{message['FromWxid']}"
         else:
-            conversation_key = f"private_{message['FromWxid']}"
-        conversation_id = self._conversation_ids.get(conversation_key, "")
-
+            context_key = f"private_{message['FromWxid']}"
+        # 维护问题历史，只存最近3条
+        history = self._question_history.get(context_key, [])
+        history.append(query)
+        if len(history) > 3:
+            history = history[-3:]
+        self._question_history[context_key] = history
+        # 组装内容
+        if len(history) > 1:
+            prev_questions = history[:-1]
+            prev_str = ' '.join([f"{i+1}. {q}" for i, q in enumerate(prev_questions)])
+            prompt = f"用户前几个问题是：\n{prev_str}\n"
+        else:
+            prompt = ''
+        prompt += f"【 用户最新的问题是：\n{history[-1]}\n】"
+        # 只传组装后的内容给dify
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
         payload = {
             "inputs": {},
-            "query": query,
+            "query": prompt,
             "response_mode": "streaming",
             "user": message["FromWxid"],
             "auto_generate_name": False,
-            "conversation_id": conversation_id,  # 新增
         }
         ai_resp = ""
         try:
@@ -236,20 +250,12 @@ class Dify(PluginBase):
                             except json.JSONDecodeError:
                                 continue
                             event = resp_json.get("event", "")
-                            # 新增：保存新的会话ID
-                            new_con_id = resp_json.get("conversation_id", "")
-                            if new_con_id and new_con_id != conversation_id:
-                                self._conversation_ids[conversation_key] = new_con_id
                             if event == "message":
                                 ai_resp += resp_json.get("answer", "")
                             elif event == "message_replace":
                                 ai_resp = resp_json.get("answer", "")
                             elif event == "message_end":
                                 pass
-                    elif resp.status in (400, 404):
-                        # 新增：重置会话ID并重试
-                        self._conversation_ids[conversation_key] = ""
-                        return await self.dify(bot, message, query)
                     else:
                         await bot.send_text_message(message["FromWxid"], f"Dify接口错误: {resp.status}")
                         return
