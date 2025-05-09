@@ -221,10 +221,10 @@ class Dify(PluginBase):
         if len(history) > 1:
             prev_questions = history[:-1]
             prev_str = ' '.join([f"{i+1}. {q}" for i, q in enumerate(prev_questions)])
-            prompt = f"用户之前的对话是：\n{prev_str}\n"
+            prompt = f"用户之前作为参考的对话：\n{prev_str}\n"
         else:
             prompt = ''
-        prompt += f"用户最新的问题是：\n{history[-1]}\n"
+        prompt += f"回答用户最新的问题：\n{history[-1]}\n"
         # 只传组装后的内容给dify
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
         payload = {
