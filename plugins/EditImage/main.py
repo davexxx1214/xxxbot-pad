@@ -89,7 +89,7 @@ class EditImage(PluginBase):
                 "timestamp": time.time(),
                 "prompt": user_prompt
             }
-            tip = "请发送您要编辑的图片。\n当前的提示词为：" + user_prompt
+            tip = "💡已开启图片编辑模式(gpt-4o)，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:

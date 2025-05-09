@@ -91,7 +91,7 @@ class Sum4all(PluginBase):
                 "prompt": user_prompt
             }
             logger.info(f"Sum4all: 记录待识图状态: {key}, prompt: {user_prompt}")
-            tip = "请发送您要识别的图片。\n当前的提示词为：" + user_prompt
+            tip = "💡已开启识图模式(o3)，您接下来第一张图片会进行识别。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
