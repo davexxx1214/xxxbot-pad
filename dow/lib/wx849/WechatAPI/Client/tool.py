@@ -7,6 +7,8 @@ import aiohttp
 import pysilk
 from pydub import AudioSegment
 from loguru import logger
+import requests
+from Crypto.Cipher import AES
 
 from .base import *
 from .protect import protector
@@ -440,3 +442,14 @@ class ToolMixin(WechatAPIClientBase):
                 return json_resp
             else:
                 self.error_handler(json_resp)
+
+def download_and_decrypt_wechat_cdn_img(cdn_url, aeskey):
+    # 1. 下载加密图片
+    resp = requests.get(cdn_url)
+    enc_data = resp.content
+
+    # 2. 解密（AES-CTR模式，key=16字节，iv=16字节全0）
+    key = bytes.fromhex(aeskey)
+    cipher = AES.new(key, AES.MODE_CTR, nonce=b'')
+    plain_data = cipher.decrypt(enc_data)
+    return plain_data
