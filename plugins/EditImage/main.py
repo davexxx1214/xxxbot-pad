@@ -12,6 +12,7 @@ import traceback
 from PIL import Image
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
+import regex  # 不是re，是regex库，支持\p{Zs}
 
 
 class EditImage(PluginBase):
@@ -48,7 +49,7 @@ class EditImage(PluginBase):
         content = message.get("Content", "")
         logger.info(f"EditImage is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
-            if re.match(f"^@{robot_name}[\\s\\u2000-\\u206F\\u3000-\\u303F]*", content):
+            if regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content):
                 return True
         return False
 
@@ -73,11 +74,9 @@ class EditImage(PluginBase):
                 user_prompt = content[len(self.edit_image_prefix):].strip()
         elif self.is_at_message(message):
             for robot_name in self.robot_names:
-                # 去除@名字和后面所有空白字符（包括各种不可见空格）
-                content = re.sub(f"@{robot_name}[\\s\\u2000-\\u206F\\u3000-\\u303F]*", "", content)
+                content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
             logger.info(f"EditImage 群聊@消息处理后内容: {repr(content)}")
-            # 再次用正则去除所有前缀不可见字符
-            content = re.sub(r"^[\\s\\u2000-\\u206F\\u3000-\\u303F]+", "", content)
+            content = content.lstrip()
             if content.startswith(self.edit_image_prefix):
                 is_trigger = True
                 user_prompt = content[len(self.edit_image_prefix):].strip()
