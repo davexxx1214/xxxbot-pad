@@ -47,6 +47,8 @@ class Sum4all(PluginBase):
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
+        # 新增日志，打印每个字符的Unicode编码
+        logger.info(f"Sum4all content unicode: {[hex(ord(c)) for c in content]}")
         logger.info(f"Sum4all is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
             if regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content):
