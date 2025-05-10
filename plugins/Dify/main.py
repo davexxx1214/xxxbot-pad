@@ -134,6 +134,7 @@ class Dify(PluginBase):
         if not self.enable:
             return
         content = message["Content"].strip()
+        content = content.lstrip()  # 去除前导空白
         if not content:
             return
         # 群聊和私聊都直接判断是否以'画'开头
@@ -154,7 +155,7 @@ class Dify(PluginBase):
         if not self.enable:
             return
         content = message["Content"].strip()
-        # 群聊和私聊都直接判断是否以'画'开头
+        content = content.lstrip()  # 去除前导空白
         if content.startswith("画") and self.image_generation_enabled:
             prompt = content[len("画"):].strip()
             if prompt:
