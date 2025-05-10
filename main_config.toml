@@ -3,7 +3,7 @@
 version = "855"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
 
 [Framework]
-type = "dow"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
+type = "default"  # 可选值: "default", "dual" (dual模式先启动原始框架，再启动DOW)
 
 [WechatAPIServer]
 host = "127.0.0.1"         # WechatAPI服务器地址，默认127.0.0.1，可修改为其他地址
@@ -30,7 +30,7 @@ ignore-protection = true             # 是否忽略风控保护机制，建议�
 
 # 群聊唤醒词设置
 enable-group-wakeup = true           # 是否启用群聊唤醒词功能
-group-wakeup-words = ["bot", "机器人"]  # 群聊唤醒词列表，消息需以这些词开头才会触发处理
+group-wakeup-words = ["@扁小鹊"]  # 群聊唤醒词列表，消息需以这些词开头才会触发处理
 
 # GitHub加速服务设置
 # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
@@ -44,7 +44,7 @@ msgDB-url = "sqlite+aiosqlite:///database/message.db"
 keyvalDB-url = "sqlite+aiosqlite:///database/keyval.db"
 
 # 管理员设置
-admins = ["wxid_lnbsshdobq7y22"]  # 管理员的wxid列表，可从消息日志中获取
+admins = ["wxid_jj8mkrv6lson22"]  # 管理员的wxid列表，可从消息日志中获取
 disabled-plugins = [
     "ExamplePlugin",
     "TencentLke",
