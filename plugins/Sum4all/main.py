@@ -107,6 +107,8 @@ class Sum4all(PluginBase):
         content = message["Content"].strip()
         # 新增日志，打印每个字符的Unicode编码
         logger.info(f"Sum4all (@message) content unicode: {[hex(ord(c)) for c in content]}")
+        # 先去掉"昵称: 换行"前缀（如 dave_xxx:\n）
+        content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
         is_trigger = False
         user_prompt = None
         # 处理@消息，去除@机器人名和后续空白

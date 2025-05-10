@@ -73,6 +73,8 @@ class EditImage(PluginBase):
                 is_trigger = True
                 user_prompt = content[len(self.edit_image_prefix):].strip()
         elif self.is_at_message(message):
+            # 先去掉"昵称: 换行"前缀（如 dave_xxx:\n）
+            content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
             for robot_name in self.robot_names:
                 content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
             logger.info(f"EditImage 群聊@消息处理后内容: {repr(content)}")
