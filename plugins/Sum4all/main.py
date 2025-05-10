@@ -101,9 +101,11 @@ class Sum4all(PluginBase):
         logger.info(f"Sum4all (@message) content unicode: {[hex(ord(c)) for c in content]}")
         is_trigger = False
         user_prompt = None
-        if content.startswith(self.vision_prefix):
+        if self.vision_prefix in content:
             is_trigger = True
-            user_prompt = content[len(self.vision_prefix):].strip()
+            # 提取"识图"后面的内容作为提示词
+            idx = content.find(self.vision_prefix)
+            user_prompt = content[idx + len(self.vision_prefix):].strip()
         if is_trigger:
             key = self.get_waiting_key(message)
             if not user_prompt:
