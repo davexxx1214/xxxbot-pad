@@ -57,10 +57,11 @@ class Sum4all(PluginBase):
         return False
 
     def get_waiting_key(self, message: dict):
-        # 群聊只用群聊ID，所有人共用同一个识图状态
         if message.get("IsGroup"):
+            logger.info(f"【DEBUG】get_waiting_key: 群聊用 {message['FromWxid']} 作为key")
             return message["FromWxid"]
         else:
+            logger.info(f"【DEBUG】get_waiting_key: 单聊用 {message['SenderWxid']} 作为key")
             return message["SenderWxid"]
 
     @on_text_message(priority=30)
