@@ -57,9 +57,9 @@ class Sum4all(PluginBase):
         return False
 
     def get_waiting_key(self, message: dict):
-        # 单聊用SenderWxid，群聊用FromWxid+SenderWxid
+        # 群聊只用群聊ID，所有人共用同一个识图状态
         if message.get("IsGroup"):
-            return f"{message['FromWxid']}|{message['SenderWxid']}"
+            return message["FromWxid"]
         else:
             return message["SenderWxid"]
 

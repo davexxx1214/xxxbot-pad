@@ -56,8 +56,9 @@ class EditImage(PluginBase):
         return False
 
     def get_waiting_key(self, message: dict):
+        # 群聊只用群聊ID，所有人共用同一个垫图状态
         if message.get("IsGroup"):
-            return f"{message['FromWxid']}|{message['SenderWxid']}"
+            return message["FromWxid"]
         else:
             return message["SenderWxid"]
 
@@ -70,10 +71,11 @@ class EditImage(PluginBase):
             return True
         is_trigger = False
         user_prompt = None
-        # 群聊和私聊都直接判断是否以edit_image_prefix开头
-        if content.startswith(self.edit_image_prefix):
+        # 改为：只要内容包含edit_image_prefix即可
+        if self.edit_image_prefix in content:
             is_trigger = True
-            user_prompt = content[len(self.edit_image_prefix):].strip()
+            idx = content.find(self.edit_image_prefix)
+            user_prompt = content[idx + len(self.edit_image_prefix):].strip()
         if is_trigger:
             key = self.get_waiting_key(message)
             if not user_prompt:
