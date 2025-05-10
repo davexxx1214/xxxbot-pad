@@ -66,24 +66,14 @@ class EditImage(PluginBase):
         if not self.enable:
             return True
         content = message["Content"].strip()
-        # 新增：先去掉"昵称: 换行"前缀
-        content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
         if not content:
             return True
         is_trigger = False
         user_prompt = None
-        if not message["IsGroup"]:
-            if content.startswith(self.edit_image_prefix):
-                is_trigger = True
-                user_prompt = content[len(self.edit_image_prefix):].strip()
-        elif self.is_at_message(message):
-            for robot_name in self.robot_names:
-                content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
-            logger.info(f"EditImage 群聊@消息处理后内容: {repr(content)}")
-            content = content.lstrip()
-            if content.startswith(self.edit_image_prefix):
-                is_trigger = True
-                user_prompt = content[len(self.edit_image_prefix):].strip()
+        # 群聊和私聊都直接判断是否以edit_image_prefix开头
+        if content.startswith(self.edit_image_prefix):
+            is_trigger = True
+            user_prompt = content[len(self.edit_image_prefix):].strip()
         if is_trigger:
             key = self.get_waiting_key(message)
             if not user_prompt:

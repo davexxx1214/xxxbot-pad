@@ -136,56 +136,33 @@ class Dify(PluginBase):
         content = message["Content"].strip()
         if not content:
             return
-        # 私聊直接回复
-        if not message["IsGroup"]:
-            if content.startswith("画") and self.image_generation_enabled:
-                prompt = content[len("画"):].strip()
-                if prompt:
-                    await self.generate_openai_image(bot, message, prompt)
+        # 群聊和私聊都直接判断是否以'画'开头
+        if content.startswith("画") and self.image_generation_enabled:
+            prompt = content[len("画"):].strip()
+            if prompt:
+                await self.generate_openai_image(bot, message, prompt)
+            else:
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-                return
-            await self.dify(bot, message, content)
             return
-        # 群聊@机器人时回复
-        if self.is_at_message(message, self.robot_names):
-            query = content
-            for robot_name in self.robot_names:
-                # 去除@名字和后面所有空白字符（包括特殊空格）
-                query = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", query)
-            query = query.lstrip()
-            logger.info(f"Dify画图分支判断: query={query}, image_generation_enabled={self.image_generation_enabled}")
-            if query.startswith("画") and self.image_generation_enabled:
-                logger.info("Dify画图分支已进入")
-                prompt = query[len("画"):].strip()
-                if prompt:
-                    await self.generate_openai_image(bot, message, prompt)
-                else:
-                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
-                return
-            await self.dify(bot, message, query)
-        # 其他群聊消息不处理
-        logger.info(f"content: {content}, query: {query}")
-        logger.info(f"robot_names: {self.robot_names}")
+        await self.dify(bot, message, content)
 
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
         if not self.enable:
             return
         content = message["Content"].strip()
-        query = content
-        for robot_name in self.robot_names:
-            # 去除@名字和后面所有空白字符（包括特殊空格）
-            query = re.sub(f"@{robot_name}[\\s\u2005\u2002\u2003\u3000]*", "", query)
-        query = query.lstrip()
-        if query.startswith("画") and self.image_generation_enabled:
-            prompt = query[len("画"):].strip()
+        # 群聊和私聊都直接判断是否以'画'开头
+        if content.startswith("画") and self.image_generation_enabled:
+            prompt = content[len("画"):].strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
                 await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
             return False
-        await self.dify(bot, message, query)
+        await self.dify(bot, message, content)
         return False
 
     @on_quote_message(priority=20)
