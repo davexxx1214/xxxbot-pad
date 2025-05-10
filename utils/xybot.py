@@ -1515,13 +1515,15 @@ class XYBot:
         content = message.get("Content", "").strip()
         # 新增：先去掉"昵称: 换行"前缀
         import re
-        content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        # 检查消息是否以任一唤醒词开头
+        content = re.sub(r"^[^@\\n]+:\s*(?:\\n|\n)", "", content)
+        # 检查消息是否包含任一唤醒词（不要求开头）
         for wakeup_word in self.group_wakeup_words:
-            if content.lower().startswith(wakeup_word.lower()):
-                # 移除唤醒词，保留实际命令内容
+            if wakeup_word.lower() in content.lower():
+                # 移除唤醒词，保留实际命令内容（只移除第一个出现的唤醒词）
                 message["OriginalContent"] = message["Content"]
-                message["Content"] = content[len(wakeup_word):].strip()
+                idx = content.lower().find(wakeup_word.lower())
+                message["Content"] = content[:idx] + content[idx+len(wakeup_word):]
+                message["Content"] = message["Content"].strip()
                 logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
                 return True
 
