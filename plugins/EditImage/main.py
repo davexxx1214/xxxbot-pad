@@ -47,6 +47,8 @@ class EditImage(PluginBase):
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
+        # 新增：先去掉"昵称: 换行"前缀
+        content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
         logger.info(f"EditImage is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
         for robot_name in self.robot_names:
             if regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content):
@@ -64,6 +66,8 @@ class EditImage(PluginBase):
         if not self.enable:
             return True
         content = message["Content"].strip()
+        # 新增：先去掉"昵称: 换行"前缀
+        content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
         if not content:
             return True
         is_trigger = False
@@ -73,8 +77,6 @@ class EditImage(PluginBase):
                 is_trigger = True
                 user_prompt = content[len(self.edit_image_prefix):].strip()
         elif self.is_at_message(message):
-            # 先去掉"昵称: 换行"前缀（如 dave_xxx:\n）
-            content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
             for robot_name in self.robot_names:
                 content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
             logger.info(f"EditImage 群聊@消息处理后内容: {repr(content)}")
