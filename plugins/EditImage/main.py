@@ -92,6 +92,33 @@ class EditImage(PluginBase):
             return False  # 阻止后续插件处理
         return True  # 允许后续插件处理
 
+    @on_at_message(priority=30)
+    async def handle_at(self, bot, message: dict):
+        if not self.enable:
+            return True
+        content = message["Content"].strip()
+        is_trigger = False
+        user_prompt = None
+        if self.edit_image_prefix in content:
+            is_trigger = True
+            idx = content.find(self.edit_image_prefix)
+            user_prompt = content[idx + len(self.edit_image_prefix):].strip()
+        if is_trigger:
+            key = self.get_waiting_key(message)
+            if not user_prompt:
+                user_prompt = "请描述您要编辑图片的内容。"
+            self.waiting_edit_image[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            tip = "💡已开启图片编辑模式(gpt-4o)，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False  # 阻止后续插件处理
+        return True  # 允许后续插件处理
+
     @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
         if not self.enable:
