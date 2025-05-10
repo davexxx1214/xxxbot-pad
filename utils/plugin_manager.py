@@ -159,10 +159,10 @@ class PluginManager:
             logger.error(f"卸载插件 {plugin_name} 时发生错误: {traceback.format_exc()}")
             return False
 
-    async def load_plugins_from_directory(self, bot: WechatAPIClient, load_disabled_plugin: bool = True) -> Union[
-        List[str], bool]:
+    async def load_plugins_from_directory(self, bot: WechatAPIClient, load_disabled_plugin: bool = True) -> List[str]:
         """从plugins目录批量加载插件"""
         loaded_plugins = []
+        failed_plugins = []
 
         for dirname in os.listdir("plugins"):
             if os.path.isdir(f"plugins/{dirname}") and os.path.exists(f"plugins/{dirname}/main.py"):
@@ -177,10 +177,15 @@ class PluginManager:
                             if await self.load_plugin(bot, obj, is_disabled=is_disabled):
                                 loaded_plugins.append(obj.__name__)
 
-                except:
+                except Exception as e:
                     logger.error(f"加载 {dirname} 时发生错误: {traceback.format_exc()}")
-                    return False
+                    failed_plugins.append(dirname)
+                    # 继续加载其他插件而不是返回False
+                    continue
 
+        if failed_plugins:
+            logger.warning(f"以下插件加载失败: {', '.join(failed_plugins)}，但不影响其他插件的加载")
+            
         return loaded_plugins
 
     async def load_plugin_from_directory(self, bot: WechatAPIClient, plugin_name: str) -> bool:
@@ -285,11 +290,11 @@ class PluginManager:
             logger.error(f"重载插件 {plugin_name} 时发生错误: {e}")
             return False
 
-    async def reload_all_plugins(self, bot: WechatAPIClient) -> List[str]:
+    async def reload_all_plugins(self, bot: WechatAPIClient) -> tuple[List[str], List[str]]:
         """重载所有插件
 
         Returns:
-            List[str]: 成功重载的插件名称列表
+            tuple[List[str], List[str]]: 成功重载的插件名称列表和失败的插件名称列表
         """
         try:
             # 记录当前加载的插件名称，排除 ManagePlugin
@@ -311,11 +316,33 @@ class PluginManager:
                     del sys.modules[module_name]
 
             # 从目录重新加载插件，不加载禁用的插件
-            return await self.load_plugins_from_directory(bot, load_disabled_plugin=False)
+            loaded_plugins = []
+            failed_plugins = []
+            
+            # 从plugins目录批量加载插件
+            for dirname in os.listdir("plugins"):
+                if os.path.isdir(f"plugins/{dirname}") and os.path.exists(f"plugins/{dirname}/main.py"):
+                    try:
+                        module = importlib.import_module(f"plugins.{dirname}.main")
+                        for name, obj in inspect.getmembers(module):
+                            if inspect.isclass(obj) and issubclass(obj, PluginBase) and obj != PluginBase:
+                                is_disabled = obj.__name__ in self.excluded_plugins
+                                
+                                if not is_disabled and await self.load_plugin(bot, obj, is_disabled=is_disabled):
+                                    loaded_plugins.append(obj.__name__)
+                    except Exception as e:
+                        logger.error(f"重载插件 {dirname} 时发生错误: {traceback.format_exc()}")
+                        failed_plugins.append(dirname)
+                        continue
+
+            if failed_plugins:
+                logger.warning(f"以下插件重载失败: {', '.join(failed_plugins)}，但不影响其他插件的加载")
+                
+            return loaded_plugins, failed_plugins
 
         except:
             logger.error(f"重载所有插件时发生错误: {traceback.format_exc()}")
-            return []
+            return [], []
 
     def get_plugin_info(self, plugin_name: str = None) -> Union[dict, List[dict]]:
         """获取插件信息

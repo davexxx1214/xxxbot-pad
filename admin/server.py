@@ -1,6 +1,6 @@
 import os
 import sys
-import json
+import json 
 import time
 import asyncio
 import threading
@@ -2414,8 +2414,8 @@ except:
     # 插件市场API配置
     PLUGIN_MARKET_API = {
         "BASE_URL": "http://xianan.xin:1562/api",  # 从https改为http
-        "LIST": "/plugins?status=approved",
-        "SUBMIT": "/plugins",
+        "LIST": "/plugins/?status=approved",  # 添加尾部斜杠，避免重定向
+        "SUBMIT": "/plugins/",  # 添加尾部斜杠，避免重定向
         "INSTALL": "/plugins/install/",
         "CACHE_FILE": os.path.join(current_dir, "_cache", "plugin_market.json"),
         "CACHE_DIR": os.path.join(current_dir, "_cache"),
@@ -2487,7 +2487,8 @@ except:
                     # 请求远程API
                     response = await client.get(
                         f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['LIST']}",
-                        headers=headers
+                        headers=headers,
+                        follow_redirects=True  # 允许重定向
                     )
 
                     response.raise_for_status()
@@ -2595,7 +2596,8 @@ except:
                     response = await client.post(
                         f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['SUBMIT']}",
                         headers=headers,
-                        json=data
+                        json=data,
+                        follow_redirects=True  # 允许重定向
                     )
 
                     response.raise_for_status()
@@ -2802,7 +2804,8 @@ except:
                             response = await client.post(
                                 f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['SUBMIT']}",
                                 headers=headers,
-                                json=data
+                                json=data,
+                                follow_redirects=True  # 允许重定向
                             )
 
                             if response.status_code == 200:
@@ -2839,7 +2842,8 @@ except:
                         # 请求远程API
                         response = await client.get(
                             f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['LIST']}",
-                            headers=headers
+                            headers=headers,
+                            follow_redirects=True  # 允许重定向
                         )
 
                         if response.status_code == 200:
@@ -7537,14 +7541,15 @@ def get_bot(wxid):
                 async with aiohttp.ClientSession() as session:
                     try:
                         # 使用插件市场API配置
-                        url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins/submit"
+                        url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins/submit/"  # 添加尾部斜杠，避免重定向
                         logger.info(f"正在同步插件到服务器: {url}")
 
                         async with session.post(
                             url,
                             json=plugin_data,
                             timeout=10,
-                            ssl=False  # 明确指定不使用SSL
+                            ssl=False,  # 明确指定不使用SSL
+                            allow_redirects=True  # 允许重定向
                         ) as response:
                             if response.status == 200:
                                 # 删除本地文件
@@ -7562,13 +7567,20 @@ def get_bot(wxid):
         try:
             async with aiohttp.ClientSession() as session:
                 try:
-                    # 使用插件市场API配置
-                    url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins"
+                    # 使用插件市场API配置，使用正确的URL格式
+                    url = f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['LIST']}"
+                    # 添加尾部斜杠以避免重定向（如果没有查询参数）
+                    if not url.endswith('/') and '?' not in url:
+                        url += '/'
                     logger.info(f"正在缓存插件市场数据: {url}")
 
-                    async with session.get(url, timeout=10, ssl=False) as response:
+                    async with session.get(url, timeout=10, ssl=False, allow_redirects=True) as response:
                         if response.status == 200:
                             data = await response.json()
+
+                            # 确保缓存目录存在
+                            cache_dir = os.path.dirname(os.path.join(current_dir, 'plugin_market_cache.json'))
+                            os.makedirs(cache_dir, exist_ok=True)
 
                             # 保存到本地缓存
                             cache_path = os.path.join(current_dir, 'plugin_market_cache.json')
@@ -7606,7 +7618,7 @@ def get_bot(wxid):
     # 插件市场API配置
     PLUGIN_MARKET_API = {
         "BASE_URL": "http://xianan.xin:1562/api",  # 从https改为http
-        "LIST": "/plugins?status=approved",
+        "LIST": "/plugins/?status=approved",  # 添加尾部斜杠，避免重定向
         "DETAIL": "/plugins/",
         "INSTALL": "/plugins/install/",
     }
