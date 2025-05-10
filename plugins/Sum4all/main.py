@@ -100,6 +100,40 @@ class Sum4all(PluginBase):
             return False  # 阻止后续插件处理
         return True  # 允许后续插件处理
 
+    @on_at_message(priority=30)
+    async def handle_at(self, bot, message: dict):
+        if not self.enable:
+            return True
+        content = message["Content"].strip()
+        # 新增日志，打印每个字符的Unicode编码
+        logger.info(f"Sum4all (@message) content unicode: {[hex(ord(c)) for c in content]}")
+        is_trigger = False
+        user_prompt = None
+        # 处理@消息，去除@机器人名和后续空白
+        for robot_name in self.robot_names:
+            content = regex.sub(f"^@{robot_name}[\\p{{Zs}}\\s]*", "", content)
+        logger.info(f"Sum4all (@message) 处理后内容: {repr(content)}")
+        content = content.lstrip()
+        if content.startswith(self.vision_prefix):
+            is_trigger = True
+            user_prompt = content[len(self.vision_prefix):].strip()
+        if is_trigger:
+            key = self.get_waiting_key(message)
+            if not user_prompt:
+                user_prompt = "请识别这张图片的内容。"
+            self.waiting_vision[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            logger.info(f"Sum4all (@message): 记录待识图状态: {key}, prompt: {user_prompt}")
+            tip = "💡已开启识图模式(o3)，您接下来第一张图片会进行识别。\n当前的提示词为：\n" + user_prompt
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False  # 阻止后续插件处理
+        return True  # 允许后续插件处理
+
     @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
         if not self.enable:
