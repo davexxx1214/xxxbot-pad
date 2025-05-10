@@ -4,6 +4,7 @@ import os
 import sys
 import tomllib
 import traceback
+import ast
 from typing import Dict, Type, List, Union
 
 from loguru import logger
@@ -19,10 +20,70 @@ class PluginManager:
         self.plugin_classes: Dict[str, Type[PluginBase]] = {}
         self.plugin_info: Dict[str, dict] = {}  # 新增：存储所有插件信息
 
-        with open("main_config.toml", "rb") as f:
-            main_config = tomllib.load(f)
+        # 默认将 excluded_plugins 初始化为空列表
+        self.excluded_plugins: List[str] = []
 
-        self.excluded_plugins = main_config["XYBot"]["disabled-plugins"]
+        try:
+            with open("main_config.toml", "rb") as f:
+                main_config = tomllib.load(f)
+            
+            # 安全地获取 'disabled-plugins' 配置
+            # 使用 .get("XYBot", {}).get("disabled-plugins") 防止因键不存在而引发 KeyError
+            disabled_plugins_setting = main_config.get("XYBot", {}).get("disabled-plugins")
+
+            if isinstance(disabled_plugins_setting, list):
+                # 如果配置值本身已经是列表 (例如，TOML 正确解析了 disabled-plugins = ["p1", "p2"])
+                self.excluded_plugins = [str(item) for item in disabled_plugins_setting]
+            elif isinstance(disabled_plugins_setting, str):
+                if not disabled_plugins_setting.strip():  # 处理空字符串或仅包含空白的字符串
+                    self.excluded_plugins = []
+                else:
+                    try:
+                        # 尝试将字符串解析为 Python 字面量 (例如 "['p1', 'p2']")
+                        parsed_value = ast.literal_eval(disabled_plugins_setting)
+                        if isinstance(parsed_value, list):
+                            # 解析结果是一个列表，确保所有元素都是字符串
+                            self.excluded_plugins = [str(item) for item in parsed_value]
+                        elif isinstance(parsed_value, str):
+                            # 如果解析结果是一个字符串 (例如，配置是 "'PluginA'")
+                            # 那么将其视为包含单个元素的列表
+                            self.excluded_plugins = [parsed_value]
+                        else:
+                            # 解析结果不是列表也不是字符串，记录警告并使用空列表
+                            logger.warning(
+                                f"配置文件中的 'disabled-plugins' 字符串 '{disabled_plugins_setting}' "
+                                f"解析后得到非预期的类型: {type(parsed_value).__name__}。"
+                                f"已将禁用插件列表初始化为空。"
+                            )
+                            self.excluded_plugins = []
+                    except (ValueError, SyntaxError):
+                        logger.warning(
+                            f"无法将配置文件中的 'disabled-plugins' 字符串 '{disabled_plugins_setting}' "
+                            f"作为列表字面量解析。将尝试将其视为单个插件名称。"
+                        )
+                        # 将该字符串视为单个插件名称，放入列表中
+                        self.excluded_plugins = [disabled_plugins_setting]
+            elif disabled_plugins_setting is not None:
+                # 配置值的类型既不是列表也不是字符串，但也不是 None (例如，可能是数字等错误配置)
+                logger.warning(
+                    f"配置文件中的 'disabled-plugins' 类型为 {type(disabled_plugins_setting).__name__}，"
+                    f"期望为列表或代表列表的字符串。已将禁用插件列表初始化为空。"
+                )
+                self.excluded_plugins = []
+            # 如果 disabled_plugins_setting 为 None (例如，键不存在)，self.excluded_plugins 保持为默认的空列表 []
+
+        except FileNotFoundError:
+            logger.error("main_config.toml 未找到。禁用插件列表将初始化为空。")
+            # self.excluded_plugins 已经是 []
+        except tomllib.TOMLDecodeError as e_toml:
+            logger.error(f"解析 main_config.toml 时发生错误: {e_toml}。禁用插件列表将初始化为空。")
+            # self.excluded_plugins 已经是 []
+        except Exception as e_init:
+            # 捕获初始化过程中其他可能的异常
+            logger.error(f"初始化 PluginManager 时读取或解析配置发生未知错误: {e_init}。禁用插件列表将初始化为空。")
+            # self.excluded_plugins 已经是 []
+        
+        
 
     async def load_plugin(self, bot: WechatAPIClient, plugin_class: Type[PluginBase],
                           is_disabled: bool = False) -> bool:

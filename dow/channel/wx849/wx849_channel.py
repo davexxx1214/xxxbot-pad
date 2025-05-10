@@ -236,10 +236,10 @@ class WX849Channel(ChatChannel):
                 # 创建消息对象
                 cmsg = WX849Message(msg, is_group)
 
-                # 检查是否有发送者昵称信息，优先使用这个
-                if "SenderNickName" in msg and msg["SenderNickName"]:
-                    cmsg.sender_nickname = msg["SenderNickName"]
-                    logger.debug(f"[WX849] 使用回调中的发送者昵称: {cmsg.sender_nickname}")
+                # 注释掉从回调消息中获取发送者昵称的部分，改用API接口获取
+                # if "SenderNickName" in msg and msg["SenderNickName"]:
+                #     cmsg.sender_nickname = msg["SenderNickName"]
+                #     logger.debug(f"[WX849] 使用回调中的发送者昵称: {cmsg.sender_nickname}")
 
                 # 处理被@消息
                 if is_group and "@" in str(msg.get("Content", "")):
@@ -1232,12 +1232,14 @@ class WX849Channel(ChatChannel):
                             break
 
                 # 检查是否@了机器人（增强版）
-                if not trigger_proceed and (cmsg.at_list or cmsg.content.find("@") >= 0):
-                    logger.debug(f"[WX849] @列表: {cmsg.at_list}, 机器人wxid: {self.wxid}")
+                if not trigger_proceed and (cmsg.at_list or cmsg.content.find("@") >= 0 or getattr(cmsg, 'is_at', False)):
+                    logger.debug(f"[WX849] @列表: {cmsg.at_list}, 机器人wxid: {self.wxid}, is_at标志: {getattr(cmsg, 'is_at', False)}")
 
-                    # 检查at_list中是否包含机器人wxid
-                    at_matched = False
-                    if cmsg.at_list and self.wxid in cmsg.at_list:
+                    # 首先检查是否已经设置了is_at标志（可能在_process_xml_message中设置）
+                    at_matched = getattr(cmsg, 'is_at', False)
+
+                    # 如果没有设置is_at标志，检查at_list中是否包含机器人wxid
+                    if not at_matched and cmsg.at_list and self.wxid in cmsg.at_list:
                         at_matched = True
                         # 设置is_at标志
                         cmsg.is_at = True
@@ -1385,6 +1387,8 @@ class WX849Channel(ChatChannel):
             self._process_text_message(cmsg)
         elif msg_type in [3, "3", "Image"]:
             self._process_image_message(cmsg)
+        elif msg_type in [6, "6", "Sharing"]:
+            self._process_sharing_message(cmsg)
         elif msg_type in [34, "34", "Voice"]:
             self._process_voice_message(cmsg)
         elif msg_type in [43, "43", "Video"]:
@@ -2609,6 +2613,70 @@ class WX849Channel(ChatChannel):
 
         logger.error(f"[WX849] 未找到图片文件: msg_id={msg_id}")
         return None
+    
+    def _process_sharing_message(self, cmsg):
+        """处理分享消息"""
+        import re
+        import xml.etree.ElementTree as ET
+
+        cmsg.ctype = ContextType.SHARING
+
+        # 处理群聊/私聊消息发送者
+        if cmsg.is_group or cmsg.from_user_id.endswith("@chatroom"):
+            cmsg.is_group = True
+            split_content = cmsg.content.split(":\n", 1)
+            if len(split_content) > 1:
+                cmsg.sender_wxid = split_content[0]
+                cmsg.content = split_content[1]
+            else:
+                # 处理没有换行的情况
+                split_content = cmsg.content.split(":", 1)
+                if len(split_content) > 1:
+                    cmsg.sender_wxid = split_content[0]
+                    cmsg.content = split_content[1]
+                else:
+                    cmsg.content = split_content[0]
+                    cmsg.sender_wxid = ""
+
+            # 设置actual_user_id和actual_user_nickname
+            cmsg.actual_user_id = cmsg.sender_wxid
+            cmsg.actual_user_nickname = cmsg.sender_wxid
+        else:
+            # 私聊消息
+            cmsg.sender_wxid = cmsg.from_user_id
+            cmsg.is_group = False
+
+            # 私聊消息也设置actual_user_id和actual_user_nickname
+            cmsg.actual_user_id = cmsg.from_user_id
+            cmsg.actual_user_nickname = cmsg.from_user_id
+
+        # 解析分享信息
+        try:
+            logger.debug(f"解析分享消息内容: {cmsg.content[:100]}")
+            # 检查内容是否是XML
+            if cmsg.content and (cmsg.content.startswith('<?xml') or cmsg.content.startswith('<msg>')):
+                try:
+                    root = ET.fromstring(cmsg.content)
+                    appmsg_element = root.find('appmsg')
+                    if appmsg_element is not None:
+                        url_element = appmsg_element.find('url')
+                        if url_element is not None:
+                            cmsg.content = url_element.text
+                            logger.debug(f"[WX849] 解析分享消息XML成功: URL={cmsg.content}")
+                        else:
+                            logger.warning(f"[WX849] XML中未找到URL")
+                    else:
+                        logger.warning(f"[WX849] XML中未找到appmsg")
+                except ET.ParseError as xml_err:
+                    # XML解析失败，创建一个默认的image_info
+                    logger.warning(f"[WX849] XML解析失败: {xml_err}")
+        except Exception as e:
+            logger.debug(f"解析分享消息失败: {e}, 内容: {cmsg.content[:100]}")
+            logger.debug(f"详细错误: {traceback.format_exc()}")
+
+        # 输出日志 - 修改为显示完整XML内容
+        logger.info(f"收到分享消息: ID:{cmsg.msg_id} 来自:{cmsg.from_user_id} 发送人:{cmsg.sender_wxid}")
+
 
     def _process_voice_message(self, cmsg):
         """处理语音消息"""
@@ -2856,8 +2924,9 @@ class WX849Channel(ChatChannel):
 
     def _process_xml_message(self, cmsg):
         """处理XML消息"""
-        # 只保留re模块的导入
+        # 导入需要的模块
         import re
+        import xml.etree.ElementTree as ET
 
         # 先默认设置为XML类型，添加错误处理
         try:
@@ -2896,34 +2965,132 @@ class WX849Channel(ChatChannel):
             if is_xml_content:
                 logger.debug(f"[WX849] XML消息：尝试从XML提取发送者")
                 try:
-                    # 使用正则表达式从XML中提取fromusername属性
-                    match = re.search(r'fromusername\s*=\s*["\'](.*?)["\']', original_content)
-                    if match:
-                        cmsg.sender_wxid = match.group(1)
-                        logger.debug(f"[WX849] XML消息：从XML提取的发送者ID: {cmsg.sender_wxid}")
-                    else:
-                        # 尝试从元素中提取
-                        match = re.search(r'<fromusername>(.*?)</fromusername>', original_content)
-                        if match:
-                            cmsg.sender_wxid = match.group(1)
-                            logger.debug(f"[WX849] XML消息：从XML元素提取的发送者ID: {cmsg.sender_wxid}")
+                    # 尝试解析XML
+                    root = ET.fromstring(original_content)
+
+                    # 检查是否是引用消息（XML类型57）
+                    xml_type = None
+                    appmsg_element = root.find(".//appmsg")
+                    if appmsg_element is not None:
+                        type_element = appmsg_element.find("type")
+                        if type_element is not None and type_element.text:
+                            xml_type = type_element.text
+
+                    logger.debug(f"[WX849] 解析到的 XML 类型: {xml_type}, 完整内容: {original_content}")
+
+                    # 如果是引用消息（类型57），特殊处理
+                    if xml_type == "57":
+                        logger.debug(f"[WX849] 检测到引用消息（类型57）")
+
+                        # 从refermsg元素中提取发送者信息
+                        refermsg = appmsg_element.find("refermsg")
+                        if refermsg is not None:
+                            # 提取原始发送者ID
+                            fromusr_element = refermsg.find("fromusr")
+                            if fromusr_element is not None and fromusr_element.text:
+                                cmsg.sender_wxid = fromusr_element.text
+                                logger.debug(f"[WX849] 引用消息：从refermsg/fromusr提取的发送者ID: {cmsg.sender_wxid}")
+
+                            # 如果没有fromusr，尝试chatusr
+                            if not cmsg.sender_wxid:
+                                chatusr_element = refermsg.find("chatusr")
+                                if chatusr_element is not None and chatusr_element.text:
+                                    cmsg.sender_wxid = chatusr_element.text
+                                    logger.debug(f"[WX849] 引用消息：从refermsg/chatusr提取的发送者ID: {cmsg.sender_wxid}")
+
+                            # 提取原始消息内容
+                            content_element = refermsg.find("content")
+                            if content_element is not None and content_element.text:
+                                # 保存原始引用的内容
+                                cmsg.quoted_content = content_element.text
+                                logger.debug(f"[WX849] 引用消息：引用的原始内容: {cmsg.quoted_content}")
+
+                                # 检查是否是图片消息
+                                if refermsg.find("type") is not None and refermsg.find("type").text == "3":
+                                    try:
+                                        # 解码XML实体
+                                        decoded_content = cmsg.quoted_content.replace("&lt;", "<").replace("&gt;", ">")
+
+                                        # 尝试解析XML
+                                        img_root = ET.fromstring(decoded_content)
+                                        img_element = img_root.find("img")
+
+                                        if img_element is not None:
+                                            # 提取图片信息
+                                            cmsg.quoted_image_info = {
+                                                'aeskey': img_element.get('aeskey', ''),
+                                                'cdnmidimgurl': img_element.get('cdnmidimgurl', ''),
+                                                'length': img_element.get('length', '0'),
+                                                'md5': img_element.get('md5', '')
+                                            }
+                                            logger.debug(f"[WX849] 引用消息：提取图片信息成功: aeskey={cmsg.quoted_image_info.get('aeskey', '')}, length={cmsg.quoted_image_info.get('length', '0')}")
+                                    except Exception as e:
+                                        logger.debug(f"[WX849] 引用消息：解析图片信息失败: {e}")
+
+                            # 提取显示名称
+                            displayname_element = refermsg.find("displayname")
+                            if displayname_element is not None and displayname_element.text:
+                                cmsg.quoted_nickname = displayname_element.text
+                                logger.debug(f"[WX849] 引用消息：引用的发送者昵称: {cmsg.quoted_nickname}")
+
+                    # 如果不是引用消息或者无法从引用消息中提取，尝试其他方法
+                    if not cmsg.sender_wxid:
+                        # 尝试从fromusername元素提取
+                        fromusername = root.find(".//fromusername")
+                        if fromusername is not None and fromusername.text:
+                            cmsg.sender_wxid = fromusername.text
+                            logger.debug(f"[WX849] XML消息：从fromusername元素提取的发送者ID: {cmsg.sender_wxid}")
                         else:
-                            logger.debug("[WX849] XML消息：未找到fromusername")
+                            # 使用正则表达式从XML中提取fromusername属性
+                            match = re.search(r'fromusername\s*=\s*["\'](.*?)["\']', original_content)
+                            if match:
+                                cmsg.sender_wxid = match.group(1)
+                                logger.debug(f"[WX849] XML消息：从XML属性提取的发送者ID: {cmsg.sender_wxid}")
                 except Exception as e:
                     logger.debug(f"[WX849] XML消息：提取发送者失败: {e}")
+                    logger.debug(traceback.format_exc())
 
             # 如果无法从XML提取，尝试传统的分割方法
             if not cmsg.sender_wxid:
-                split_content = original_content.split(":\n", 1)
-                if len(split_content) > 1 and not split_content[0].startswith("<"):
-                    cmsg.sender_wxid = split_content[0]
-                    logger.debug(f"[WX849] XML消息：使用分割方法提取的发送者ID: {cmsg.sender_wxid}")
+                # 检查是否是引用消息格式（包含"引用:"的文本）
+                if " 引用:" in original_content:
+                    try:
+                        # 尝试提取真实发送者ID
+                        parts = original_content.split(" 引用:", 1)
+                        if len(parts) > 1:
+                            # 提取发送者ID
+                            sender_part = parts[0]
+                            # 如果发送者部分包含@，可能是格式为"@小小x 酱爆说了啥"
+                            if sender_part.startswith("@"):
+                                # 使用SenderWxid字段作为发送者ID
+                                if "SenderWxid" in cmsg.msg and cmsg.msg["SenderWxid"]:
+                                    cmsg.sender_wxid = cmsg.msg["SenderWxid"]
+                                    logger.debug(f"[WX849] 引用消息：使用SenderWxid字段作为发送者ID: {cmsg.sender_wxid}")
+                            else:
+                                # 尝试常规分割方法
+                                split_content = sender_part.split(":", 1)
+                                if len(split_content) > 1 and not split_content[0].startswith("<"):
+                                    cmsg.sender_wxid = split_content[0]
+                                    logger.debug(f"[WX849] 引用消息：使用冒号分割提取的发送者ID: {cmsg.sender_wxid}")
+                    except Exception as e:
+                        logger.debug(f"[WX849] 引用消息：提取发送者失败: {e}")
                 else:
-                    # 处理没有换行的情况
-                    split_content = original_content.split(":", 1)
+                    # 常规分割方法
+                    split_content = original_content.split(":\n", 1)
                     if len(split_content) > 1 and not split_content[0].startswith("<"):
                         cmsg.sender_wxid = split_content[0]
-                        logger.debug(f"[WX849] XML消息：使用冒号分割提取的发送者ID: {cmsg.sender_wxid}")
+                        logger.debug(f"[WX849] XML消息：使用分割方法提取的发送者ID: {cmsg.sender_wxid}")
+                    else:
+                        # 处理没有换行的情况
+                        split_content = original_content.split(":", 1)
+                        if len(split_content) > 1 and not split_content[0].startswith("<"):
+                            cmsg.sender_wxid = split_content[0]
+                            logger.debug(f"[WX849] XML消息：使用冒号分割提取的发送者ID: {cmsg.sender_wxid}")
+
+            # 如果仍然无法提取，尝试使用SenderWxid字段
+            if not cmsg.sender_wxid and "SenderWxid" in cmsg.msg and cmsg.msg["SenderWxid"]:
+                cmsg.sender_wxid = cmsg.msg["SenderWxid"]
+                logger.debug(f"[WX849] XML消息：使用SenderWxid字段作为发送者ID: {cmsg.sender_wxid}")
 
             # 如果仍然无法提取，使用默认值
             if not cmsg.sender_wxid:
@@ -2937,6 +3104,39 @@ class WX849Channel(ChatChannel):
         # 设置actual_user_id和actual_user_nickname
         cmsg.actual_user_id = cmsg.sender_wxid or cmsg.from_user_id
         cmsg.actual_user_nickname = cmsg.sender_wxid or cmsg.from_user_id
+
+        # 检查XML消息内容中是否包含@机器人的文本
+        if cmsg.is_group and cmsg.content:
+            # 获取可能的机器人名称
+            robot_names = []
+            if self.name:
+                robot_names.append(self.name)
+            if hasattr(cmsg, 'self_display_name') and cmsg.self_display_name:
+                robot_names.append(cmsg.self_display_name)
+
+            # 检查消息中是否包含@机器人名称
+            for name in robot_names:
+                at_text = f"@{name}"
+                if at_text in cmsg.content:
+                    logger.debug(f"[WX849] 在XML消息内容中直接匹配到@机器人: {at_text}")
+                    cmsg.is_at = True
+
+                    # 确保at_list中包含机器人wxid
+                    if not hasattr(cmsg, 'at_list'):
+                        cmsg.at_list = []
+                    if self.wxid not in cmsg.at_list:
+                        cmsg.at_list.append(self.wxid)
+
+                    # 确保设置了is_at标志
+                    cmsg.is_at = True
+
+                    # 尝试移除@文本，保留实际内容
+                    for pattern in [f"@{name} ", f"@{name}\u2005", f"@{name}"]:
+                        if pattern in cmsg.content:
+                            cmsg.content = cmsg.content.replace(pattern, "", 1).strip()
+                            logger.debug(f"[WX849] 去除XML消息中的@文本后的内容: {cmsg.content}")
+                            break
+                    break
 
         # 输出日志，显示完整XML内容
         logger.info(f"收到XML消息: ID:{cmsg.msg_id} 来自:{cmsg.from_user_id} 发送人:{cmsg.sender_wxid}\nXML内容: {cmsg.content}")
@@ -3205,6 +3405,12 @@ class WX849Channel(ChatChannel):
                         logger.debug(f"[WX849] 检测到IsAtMessage标志")
                         # 设置is_at标志
                         cmsg.is_at = True
+
+                        # 确保at_list中包含机器人wxid
+                        if not hasattr(cmsg, 'at_list'):
+                            cmsg.at_list = []
+                        if self.wxid not in cmsg.at_list:
+                            cmsg.at_list.append(self.wxid)
 
                         # 尝试从日志行中提取@列表
                         if "@:" in raw_log_line:
@@ -4093,8 +4299,8 @@ class WX849Channel(ChatChannel):
                 else:
                     api_path_prefix = "/VXAPI"
 
-                # 使用 /VXAPI 前缀，与 WomenVoice 插件保持一致
-                api_path_prefix = "/VXAPI"
+                # 注意：之前这里强制使用/VXAPI前缀，现在根据协议版本动态选择
+                logger.debug(f"[WX849] 语音消息使用API路径前缀: {api_path_prefix} (适用于{protocol_version}协议)")
 
                 # 如果语音时长超过最大片段时长，将其分割成多个片段发送
                 if total_duration > max_segment_duration:
@@ -6439,6 +6645,8 @@ class WX849Channel(ChatChannel):
                 # 设置is_at标志，与gewechat保持一致
                 if hasattr(msg, 'is_at'):
                     context["is_at"] = msg.is_at
+                    if msg.is_at:
+                        logger.debug(f"[WX849] 从msg.is_at标志检测到@机器人")
                 elif hasattr(msg, 'at_list') and self.wxid in msg.at_list:
                     context["is_at"] = True
                     logger.debug(f"[WX849] 从at_list中检测到@机器人: {self.wxid}")
@@ -6446,6 +6654,10 @@ class WX849Channel(ChatChannel):
                 elif hasattr(msg, 'msg') and "IsAtMessage" in msg.msg and msg.msg["IsAtMessage"]:
                     context["is_at"] = True
                     logger.debug(f"[WX849] 从IsAtMessage标志检测到@机器人")
+                # 检查消息内容中是否包含@机器人的文本
+                elif ctype == ContextType.XML and content and (f"@{self.name}" in content or (hasattr(msg, 'self_display_name') and msg.self_display_name and f"@{msg.self_display_name}" in content)):
+                    context["is_at"] = True
+                    logger.debug(f"[WX849] 从XML消息内容中检测到@机器人: {content}")
                 else:
                     context["is_at"] = False
 
@@ -6454,6 +6666,39 @@ class WX849Channel(ChatChannel):
                     # 创建at_list的副本，避免共享引用
                     context["at_list"] = list(msg.at_list)
                     logger.debug(f"[WX849] 设置at_list到上下文: {context.get('at_list', [])}")
+
+                # 添加引用消息信息到上下文
+                if hasattr(msg, 'msg') and "QuotedMessage" in msg.msg:
+                    quoted_message = msg.msg["QuotedMessage"]
+                    context["quoted_message"] = quoted_message
+
+                    # 记录引用消息的关键信息
+                    if "Content" in quoted_message:
+                        context["quoted_content"] = quoted_message["Content"]
+                        logger.debug(f"[WX849] 设置quoted_content到上下文: {quoted_message['Content']}")
+
+                    if "Nickname" in quoted_message:
+                        context["quoted_nickname"] = quoted_message["Nickname"]
+                        logger.debug(f"[WX849] 设置quoted_nickname到上下文: {quoted_message['Nickname']}")
+
+                    # 如果引用的是图片消息，尝试下载图片
+                    if quoted_message.get("MsgType") == 3:
+                        logger.debug(f"[WX849] 检测到引用图片消息")
+
+                        # 检查是否有图片URL或其他信息
+                        if "cdnmidimgurl" in quoted_message:
+                            image_url = quoted_message["cdnmidimgurl"]
+                            logger.debug(f"[WX849] 引用图片URL: {image_url}")
+                            context["quoted_image_url"] = image_url
+
+                        # 如果有图片的md5和aeskey，也记录下来
+                        if "md5" in quoted_message:
+                            context["quoted_image_md5"] = quoted_message["md5"]
+                            logger.debug(f"[WX849] 引用图片MD5: {quoted_message['md5']}")
+
+                        if "aeskey" in quoted_message:
+                            context["quoted_image_aeskey"] = quoted_message["aeskey"]
+                            logger.debug(f"[WX849] 引用图片AESKey: {quoted_message['aeskey']}")
 
                 # 设置session_id为群ID
                 context["session_id"] = msg.from_user_id
@@ -6947,6 +7192,237 @@ class WX849Channel(ChatChannel):
         except Exception as e:
             logger.error(f"[WX849] 更新联系人信息缓存失败: {e}")
             logger.error(f"[WX849] 详细错误: {traceback.format_exc()}")
+
+    def download_image(self, msg_id, group_id=None):
+        """下载图片，供外部调用
+
+        Args:
+            msg_id: 消息ID
+            group_id: 群ID，如果是群消息
+
+        Returns:
+            str: 图片文件路径，如果下载失败则返回None
+        """
+        logger.debug(f"[WX849] 尝试下载图片: msg_id={msg_id}, group_id={group_id}")
+
+        # 创建临时目录
+        tmp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp", "images")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        # 生成图片文件名
+        image_filename = f"img_{msg_id}_{int(time.time())}.jpg"
+        image_path = os.path.join(tmp_dir, image_filename)
+
+        # 检查是否已经存在相同的图片文件
+        existing_files = [f for f in os.listdir(tmp_dir) if f.startswith(f"img_{msg_id}_")]
+        if existing_files:
+            # 找到最新的文件
+            latest_file = sorted(existing_files, key=lambda x: os.path.getmtime(os.path.join(tmp_dir, x)), reverse=True)[0]
+            existing_path = os.path.join(tmp_dir, latest_file)
+
+            # 检查文件是否有效
+            if os.path.exists(existing_path) and os.path.getsize(existing_path) > 0:
+                logger.debug(f"[WX849] 找到已存在的图片文件: {existing_path}")
+                return existing_path
+
+        # 构建API请求参数
+        api_host = conf().get("wx849_api_host", "127.0.0.1")
+        api_port = conf().get("wx849_api_port", 9011)
+        protocol_version = conf().get("wx849_protocol_version", "849")
+
+        # 确定API路径前缀
+        if protocol_version == "855" or protocol_version == "ipad":
+            api_path_prefix = "/api"
+        else:
+            api_path_prefix = "/VXAPI"
+
+        # 使用传入的图片大小或使用默认值
+        data_len = getattr(self, "data_len", 345519)  # 如果设置了data_len属性，则使用它，否则使用默认值
+        logger.debug(f"[WX849] 使用图片大小: {data_len} 字节")
+
+        # 分段大小
+        chunk_size = 65536  # 64KB - 必须使用这个大小，API限制每次最多下载64KB
+
+        # 计算分段数
+        num_chunks = (data_len + chunk_size - 1) // chunk_size
+        if num_chunks <= 0:
+            num_chunks = 1  # 至少分1段
+
+        logger.info(f"[WX849] 开始分段下载图片，总大小: {data_len} 字节，分 {num_chunks} 段下载")
+
+        # 创建一个空文件
+        with open(image_path, "wb") as f:
+            pass
+
+        # 分段下载
+        all_chunks_success = True
+        for i in range(num_chunks):
+            start_pos = i * chunk_size
+            current_chunk_size = min(chunk_size, data_len - start_pos)
+            if current_chunk_size <= 0:
+                current_chunk_size = chunk_size
+
+            # 构建API请求参数
+            params = {
+                "MsgId": msg_id,
+                "ToWxid": group_id if group_id else "filehelper",
+                "Wxid": self.wxid,
+                "DataLen": data_len,
+                "CompressType": 0,
+                "Section": {
+                    "StartPos": start_pos,
+                    "DataLen": current_chunk_size
+                }
+            }
+
+            logger.debug(f"[WX849] 尝试下载图片分段: MsgId={msg_id}, ToWxid={group_id if group_id else 'filehelper'}, DataLen={data_len}, StartPos={start_pos}, ChunkSize={current_chunk_size}")
+
+            # 构建完整的API URL
+            api_url = f"http://{api_host}:{api_port}{api_path_prefix}/Tools/DownloadImg"
+
+            # 记录完整的请求URL和参数
+            logger.debug(f"[WX849] 图片下载API URL: {api_url}")
+            logger.debug(f"[WX849] 图片下载API参数: {params}")
+
+            try:
+                # 使用同步请求
+                import requests
+                response = requests.post(api_url, json=params, timeout=10)
+
+                if response.status_code != 200:
+                    logger.error(f"[WX849] 下载图片分段失败, 状态码: {response.status_code}")
+                    all_chunks_success = False
+                    break
+
+                # 获取响应内容
+                result = response.json()
+
+                # 检查响应是否成功
+                if not result.get("Success", False):
+                    logger.error(f"[WX849] 下载图片分段失败: {result.get('Message', '未知错误')}")
+                    all_chunks_success = False
+                    break
+
+                # 提取图片数据
+                data = result.get("Data", {})
+
+                # 记录响应结构以便调试
+                if isinstance(data, dict):
+                    logger.debug(f"[WX849] 响应Data字段包含键: {list(data.keys())}")
+
+                # 尝试不同的响应格式
+                chunk_base64 = None
+
+                # 参考 WechatAPI/Client/tool_extension.py 中的处理方式
+                if isinstance(data, dict):
+                    # 如果是字典，尝试获取buffer字段
+                    if "buffer" in data:
+                        logger.debug(f"[WX849] 从data.buffer字段获取图片数据")
+                        chunk_base64 = data.get("buffer")
+                    elif "data" in data and isinstance(data["data"], dict) and "buffer" in data["data"]:
+                        logger.debug(f"[WX849] 从data.data.buffer字段获取图片数据")
+                        chunk_base64 = data["data"]["buffer"]
+                    else:
+                        # 尝试其他可能的字段名
+                        for field in ["Chunk", "Image", "Data", "FileData", "data"]:
+                            if field in data:
+                                logger.debug(f"[WX849] 从data.{field}字段获取图片数据")
+                                chunk_base64 = data.get(field)
+                                break
+                elif isinstance(data, str):
+                    # 如果直接返回字符串，可能就是base64数据
+                    logger.debug(f"[WX849] Data字段是字符串，直接使用")
+                    chunk_base64 = data
+
+                # 如果在data中没有找到，尝试在整个响应中查找
+                if not chunk_base64 and isinstance(result, dict):
+                    for field in ["data", "Data", "FileData", "Image"]:
+                        if field in result:
+                            logger.debug(f"[WX849] 从result.{field}字段获取图片数据")
+                            chunk_base64 = result.get(field)
+                            break
+
+                if not chunk_base64:
+                    logger.error(f"[WX849] 下载图片分段失败: 响应中无图片数据")
+                    all_chunks_success = False
+                    break
+
+                # 解码数据并保存图片分段
+                try:
+                    # 尝试确定数据类型并正确处理
+                    if isinstance(chunk_base64, str):
+                        # 尝试作为Base64解码
+                        try:
+                            # 修复：确保字符串是有效的Base64
+                            # 移除可能的非Base64字符
+                            clean_base64 = chunk_base64.strip()
+                            # 确保长度是4的倍数，如果不是，添加填充
+                            padding = 4 - (len(clean_base64) % 4) if len(clean_base64) % 4 != 0 else 0
+                            clean_base64 = clean_base64 + ('=' * padding)
+
+                            import base64
+                            chunk_data = base64.b64decode(clean_base64)
+                            logger.debug(f"[WX849] 成功解码Base64数据，大小: {len(chunk_data)} 字节")
+                        except Exception as decode_err:
+                            logger.error(f"[WX849] Base64解码失败: {decode_err}")
+                            all_chunks_success = False
+                            break
+                    elif isinstance(chunk_base64, bytes):
+                        # 已经是二进制数据，直接使用
+                        logger.debug(f"[WX849] 使用二进制数据，大小: {len(chunk_base64)} 字节")
+                        chunk_data = chunk_base64
+                    else:
+                        logger.error(f"[WX849] 未知数据类型: {type(chunk_base64)}")
+                        all_chunks_success = False
+                        break
+
+                    # 追加到文件
+                    with open(image_path, "ab") as f:
+                        f.write(chunk_data)
+                    logger.debug(f"[WX849] 第 {i+1}/{num_chunks} 段下载成功，大小: {len(chunk_data)} 字节")
+                except Exception as decode_err:
+                    logger.error(f"[WX849] 解码Base64图片分段数据失败: {decode_err}")
+                    all_chunks_success = False
+                    break
+            except Exception as api_err:
+                logger.error(f"[WX849] 调用图片分段API失败: {api_err}")
+                all_chunks_success = False
+                break
+
+        if all_chunks_success:
+            # 检查文件大小
+            file_size = os.path.getsize(image_path)
+            logger.info(f"[WX849] 分段下载图片成功，总大小: {file_size} 字节")
+
+            # 检查文件是否存在且有效
+            if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+                # 验证图片文件是否为有效的图片格式
+                try:
+                    from PIL import Image
+                    try:
+                        # 尝试打开图片文件
+                        with Image.open(image_path) as img:
+                            # 获取图片格式和大小
+                            img_format = img.format
+                            img_size = img.size
+                            logger.info(f"[WX849] 图片验证成功: 格式={img_format}, 大小={img_size}")
+                            return image_path
+                    except Exception as img_err:
+                        logger.error(f"[WX849] 图片验证失败，可能不是有效的图片文件: {img_err}")
+                except ImportError:
+                    # 如果PIL库未安装，假设文件有效
+                    if os.path.getsize(image_path) > 10000:  # 至少10KB
+                        logger.info(f"[WX849] 图片下载完成，保存到: {image_path}")
+                        return image_path
+
+        # 如果下载失败，删除可能存在的不完整文件
+        if os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except Exception as e:
+                logger.error(f"[WX849] 删除不完整的图片文件失败: {e}")
+
+        return None
 
     def reply(self, reply: Reply, context: Context = None):
         """回复消息的统一处理函数"""

@@ -11,6 +11,8 @@ from channel.channel import Channel
 from common.dequeue import Dequeue
 from common import memory
 from plugins import *
+from common.log import logger
+from config import conf
 
 try:
     from voice.audio_convert import any_to_wav
@@ -273,6 +275,417 @@ class ChatChannel(Channel):
                 pass
             elif context.type == ContextType.FUNCTION or context.type == ContextType.FILE:  # 文件消息及函数调用等，当前无默认逻辑
                 pass
+            elif context.type == ContextType.XML:  # XML消息，当前无默认逻辑，但需要处理
+                # 检查是否是@机器人的消息
+                is_at_bot = context.get("is_at", False)
+
+                # 如果context中没有is_at标志，检查at_list中是否包含机器人wxid
+                if not is_at_bot and "at_list" in context.kwargs and "IsAtMessage" in context.kwargs.get("msg", {}).msg:
+                    # 只有当IsAtMessage为True时，才检查at_list中是否包含机器人wxid
+                    if context.kwargs["msg"].msg["IsAtMessage"]:
+                        # 遍历所有可能的机器人wxid
+                        for bot_wxid in ["wxid_p60yfpl5zg2m29", "wxid_uz9za1pqr3ea22", "wxid_l5im9jaxhr4412"]:
+                            if bot_wxid in context.kwargs["at_list"]:
+                                is_at_bot = True
+                                logger.debug(f"[chat_channel] 从at_list中检测到@机器人: {bot_wxid}")
+                                break
+
+                # 检查消息内容中是否包含@机器人的文本，并且确认IsAtMessage为True
+                if not is_at_bot and context.content and "IsAtMessage" in context.kwargs.get("msg", {}).msg:
+                    if context.kwargs["msg"].msg["IsAtMessage"]:
+                        for bot_name in ["小小x", "小x"]:
+                            if f"@{bot_name}" in context.content:
+                                is_at_bot = True
+                                logger.debug(f"[chat_channel] 从消息内容中检测到@机器人: @{bot_name}")
+                                break
+
+                # 如果是@机器人的消息，按照文本消息处理
+                if is_at_bot:
+                    logger.debug("[chat_channel] 处理XML类型的@机器人消息: {}".format(context.content))
+                    # 检查是否有引用消息
+                    quoted_content = context.get("quoted_content")
+                    quoted_nickname = context.get("quoted_nickname")
+
+                    # 构建包含引用信息的消息内容
+                    enhanced_content = context.content
+
+                    # 检查是否引用了图片消息
+                    quoted_msg_type = None
+                    if "quoted_message" in context.kwargs:
+                        quoted_msg_type = context.kwargs["quoted_message"].get("MsgType")
+
+                    # 如果引用的是图片消息
+                    if quoted_msg_type == 3:
+                        logger.debug(f"[chat_channel] 检测到引用图片消息")
+
+                        # 检查上下文中是否有图片URL
+                        image_url = context.get("quoted_image_url")
+
+                        # 如果上下文中没有图片URL，尝试从引用消息中提取
+                        if not image_url and "msg" in context.kwargs and hasattr(context.kwargs["msg"], "msg") and "QuotedMessage" in context.kwargs["msg"].msg:
+                            quoted_message = context.kwargs["msg"].msg["QuotedMessage"]
+
+                            # 尝试从引用消息中提取图片URL
+                            if "cdnthumburl" in quoted_message:
+                                image_url = quoted_message["cdnthumburl"]
+                                logger.debug(f"[chat_channel] 从引用消息的cdnthumburl字段获取到图片URL: {image_url}")
+                            elif "cdnmidimgurl" in quoted_message:
+                                image_url = quoted_message["cdnmidimgurl"]
+                                logger.debug(f"[chat_channel] 从引用消息的cdnmidimgurl字段获取到图片URL: {image_url}")
+                            # 如果没有直接的URL字段，尝试从Content中提取
+                            elif "Content" in quoted_message:
+                                try:
+                                    import re
+                                    # 尝试使用正则表达式提取图片URL
+                                    url_match = re.search(r'cdnthumburl="([^"]+)"', quoted_message["Content"])
+                                    if url_match:
+                                        image_url = url_match.group(1)
+                                        logger.debug(f"[chat_channel] 从引用消息Content中提取到cdnthumburl: {image_url}")
+                                    else:
+                                        url_match = re.search(r'cdnmidimgurl="([^"]+)"', quoted_message["Content"])
+                                        if url_match:
+                                            image_url = url_match.group(1)
+                                            logger.debug(f"[chat_channel] 从引用消息Content中提取到cdnmidimgurl: {image_url}")
+                                except Exception as e:
+                                    logger.error(f"[chat_channel] 提取图片URL失败: {e}")
+
+                        # 如果找到了图片URL，尝试下载图片并分析
+                        if image_url:
+                            try:
+                                # 创建临时目录
+                                import os
+                                import tempfile
+                                import requests
+                                import uuid
+
+                                # 创建临时文件名
+                                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+                                if not os.path.exists(temp_dir):
+                                    os.makedirs(temp_dir)
+
+                                # 生成唯一的文件名
+                                image_filename = f"quoted_image_{uuid.uuid4().hex}.jpg"
+                                image_path = os.path.join(temp_dir, image_filename)
+
+                                # 下载图片
+                                logger.debug(f"[chat_channel] 尝试下载引用图片: {image_url}")
+                                response = requests.get(image_url, timeout=10)
+                                if response.status_code == 200:
+                                    with open(image_path, 'wb') as f:
+                                        f.write(response.content)
+                                    logger.debug(f"[chat_channel] 成功下载引用图片: {image_path}")
+
+                                    # 添加图片路径到上下文
+                                    context["quoted_image_path"] = image_path
+
+                                    # 尝试使用图像识别API分析图片内容
+                                    try:
+                                        # 这里可以调用图像识别API，例如百度OCR、Google Vision等
+                                        # 为了简单起见，我们这里只是添加一个占位符
+                                        image_description = "[图片内容无法自动识别，请查看图片后回答]"
+
+                                        # 修改增强消息内容
+                                        enhanced_content = f"{context.content}\n\n[引用了一张图片] {image_description}"
+                                        logger.debug(f"[chat_channel] 增强消息内容，添加图片引用信息: {enhanced_content}")
+                                    except Exception as e:
+                                        logger.error(f"[chat_channel] 图片识别失败: {e}")
+                                        enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法识别内容]"
+                                else:
+                                    logger.error(f"[chat_channel] 下载引用图片失败，状态码: {response.status_code}")
+                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，但下载失败]"
+                            except Exception as e:
+                                logger.error(f"[chat_channel] 下载引用图片异常: {e}")
+                                enhanced_content = f"{context.content}\n\n[引用了一张图片，但处理过程中出错]"
+                        # 如果没有找到图片URL，尝试使用消息ID和其他信息下载图片
+                        elif "msg" in context.kwargs and hasattr(context.kwargs["msg"], "msg") and "QuotedMessage" in context.kwargs["msg"].msg:
+                            quoted_message = context.kwargs["msg"].msg["QuotedMessage"]
+
+                            # 尝试从引用消息中提取svrid（消息ID）
+                            msg_id = None
+                            logger.debug(f"[chat_channel] 引用消息内容: {quoted_message}")
+                            if "NewMsgId" in quoted_message:
+                                msg_id = quoted_message["NewMsgId"]
+                                logger.debug(f"[chat_channel] 从NewMsgId字段获取到消息ID: {msg_id}")
+                            elif "svrid" in quoted_message:
+                                msg_id = quoted_message["svrid"]
+                                logger.debug(f"[chat_channel] 从svrid字段获取到消息ID: {msg_id}")
+                            else:
+                                logger.warning(f"[chat_channel] 引用消息中没有NewMsgId或svrid字段: {quoted_message}")
+
+                            # 尝试从原始日志行中提取svrid
+                            if not msg_id and "RawLogLine" in context.kwargs["msg"].msg:
+                                raw_log = context.kwargs["msg"].msg["RawLogLine"]
+                                import re  # 确保re模块在这里可用
+                                svrid_match = re.search(r'<svrid>(.*?)</svrid>', raw_log)
+                                if svrid_match:
+                                    msg_id = svrid_match.group(1)
+                                    logger.debug(f"[chat_channel] 从原始日志行中提取到svrid: {msg_id}")
+
+                            # 如果找到了消息ID，尝试下载图片
+                            if msg_id:
+                                try:
+                                    # 尝试使用消息ID下载图片
+                                    logger.debug(f"[chat_channel] 尝试使用消息ID下载图片: {msg_id}")
+
+                                    # 获取群ID
+                                    group_id = context.kwargs.get("group_id")
+                                    if not group_id and "fromusr" in quoted_message:
+                                        group_id = quoted_message["fromusr"]
+                                        logger.debug(f"[chat_channel] 从引用消息中获取到群ID: {group_id}")
+
+                                    # 这里需要调用channel对象的方法来下载图片
+                                    if "channel" in context.kwargs and hasattr(context.kwargs["channel"], "download_image"):
+                                        image_path = context.kwargs["channel"].download_image(msg_id, group_id)
+                                        if image_path and os.path.exists(image_path):
+                                            logger.debug(f"[chat_channel] 成功使用消息ID下载图片: {image_path}")
+                                            context["quoted_image_path"] = image_path
+                                            enhanced_content = f"{context.content}\n\n[引用了一张图片，已下载]"
+                                        else:
+                                            logger.error(f"[chat_channel] 使用消息ID下载图片失败")
+                                            enhanced_content = f"{context.content}\n\n[引用了一张图片，但下载失败]"
+                                    else:
+                                        logger.error(f"[chat_channel] 无法使用消息ID下载图片，channel对象不可用或没有download_image方法")
+                                        enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法下载]"
+                                except Exception as e:
+                                    logger.error(f"[chat_channel] 使用消息ID下载图片异常: {e}")
+                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，但处理过程中出错]"
+                            else:
+                                # 尝试直接从XML中提取图片信息
+                                if "RawLogLine" in context.kwargs["msg"].msg:
+                                    raw_log = context.kwargs["msg"].msg["RawLogLine"]
+                                    try:
+                                        # 提取cdnthumburl
+                                        import re  # 确保re模块在这里可用
+                                        cdnthumburl_match = re.search(r'cdnthumburl="([^"]*)"', raw_log)
+
+                                        # 如果从原始日志行中没有找到cdnthumburl，尝试从DEBUG日志中查找最近的XML内容
+                                        if not cdnthumburl_match:
+                                            try:
+                                                # 查找最近的XML日志
+                                                import glob
+                                                import os
+
+                                                # 获取日志文件路径
+                                                log_dir = "logs"
+                                                if not os.path.exists(log_dir):
+                                                    os.makedirs(log_dir)
+
+                                                # 查找最新的日志文件
+                                                log_files = glob.glob(os.path.join(log_dir, "*.log"))
+                                                # 特别查找wx849_callback_daemon日志文件
+                                                callback_logs = glob.glob(os.path.join(log_dir, "wx849_callback_daemon*.log"))
+                                                # 特别查找XYBot日志文件
+                                                xybot_logs = glob.glob(os.path.join(log_dir, "XYBot_*.log"))
+
+                                                # 如果用户提供了具体的日志文件路径，直接使用
+                                                user_log_path = context.kwargs.get("msg", {}).get("RawLogLine", "")
+                                                if "logs\\" in user_log_path:
+                                                    log_path = user_log_path.split("logs\\")[1].split(" ")[0]
+                                                    if log_path:
+                                                        user_log = os.path.join(log_dir, log_path)
+                                                        if os.path.exists(user_log):
+                                                            logger.debug(f"[chat_channel] 使用用户提供的日志文件: {user_log}")
+                                                            latest_logs = [user_log]
+                                                            # 不要在这里返回，继续执行后面的代码
+
+                                                # 记录找到的所有日志文件
+                                                logger.debug(f"[chat_channel] 找到 {len(callback_logs)} 个回调守护进程日志文件")
+                                                logger.debug(f"[chat_channel] 找到 {len(xybot_logs)} 个XYBot日志文件")
+                                                logger.debug(f"[chat_channel] 找到 {len(log_files)} 个日志文件")
+
+                                                # 按照优先级查找日志文件
+                                                latest_logs = []
+
+                                                # 优先使用XYBot日志文件
+                                                if xybot_logs:
+                                                    latest_xybot_log = max(xybot_logs, key=os.path.getmtime)
+                                                    latest_logs.append(latest_xybot_log)
+                                                    logger.debug(f"[chat_channel] 找到最新的XYBot日志文件: {latest_xybot_log}")
+
+                                                # 其次使用wx849_callback_daemon日志文件
+                                                if callback_logs:
+                                                    latest_callback_log = max(callback_logs, key=os.path.getmtime)
+                                                    latest_logs.append(latest_callback_log)
+                                                    logger.debug(f"[chat_channel] 找到最新的回调守护进程日志文件: {latest_callback_log}")
+
+                                                # 最后使用其他日志文件
+                                                if log_files:
+                                                    latest_log = max(log_files, key=os.path.getmtime)
+                                                    latest_logs.append(latest_log)
+                                                    logger.debug(f"[chat_channel] 找到最新的日志文件: {latest_log}")
+
+                                                # 如果没有找到任何日志文件，返回错误
+                                                if not latest_logs:
+                                                    logger.error(f"[chat_channel] 没有找到任何日志文件")
+                                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法找到日志文件]"
+                                                    return enhanced_content
+
+                                                # 从日志文件中查找最近的XML内容
+                                                xml_debug_pattern = re.compile(r'解析到的 XML 类型: 57, 完整内容: (.*?)$')
+                                                # 备用模式，匹配DEBUG日志中的XML内容
+                                                xml_debug_pattern2 = re.compile(r'DEBUG \| 解析到的 XML 类型: 57, 完整内容: (.*?)$')
+                                                xml_content = None
+
+                                                # 首先检查回调消息中是否包含完整的XML内容
+                                                if "msg" in context.kwargs and "QuotedMessage" in context.kwargs["msg"].msg and "FullXmlContent" in context.kwargs["msg"].msg:
+                                                    xml_content = context.kwargs["msg"].msg["FullXmlContent"]
+                                                    logger.debug(f"[chat_channel] 从回调消息中提取到完整的XML内容，长度: {len(xml_content)}")
+
+                                                # 如果回调消息中没有完整的XML内容，尝试从日志文件中查找
+                                                if not xml_content:
+                                                    # 遍历所有找到的日志文件，查找XML内容
+                                                    for log_file in latest_logs:
+                                                        logger.debug(f"[chat_channel] 正在搜索日志文件: {log_file}")
+                                                        try:
+                                                            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                                                lines = f.readlines()
+                                                                for i in range(len(lines) - 1, max(0, len(lines) - 50), -1):
+                                                                    # 尝试使用第一种模式匹配
+                                                                    xml_match = xml_debug_pattern.search(lines[i])
+                                                                    if not xml_match:
+                                                                        # 如果第一种模式匹配失败，尝试使用第二种模式
+                                                                        xml_match = xml_debug_pattern2.search(lines[i])
+
+                                                                    if xml_match:
+                                                                        xml_content = xml_match.group(1)
+                                                                        logger.debug(f"[chat_channel] 在文件 {log_file} 中找到XML内容，长度: {len(xml_content)}")
+                                                                        break
+
+                                                            # 如果在当前日志文件中找到了XML内容，就不再继续查找
+                                                            if xml_content:
+                                                                break
+                                                        except Exception as e:
+                                                            logger.error(f"[chat_channel] 读取日志文件 {log_file} 异常: {e}")
+                                                            continue
+
+                                                if xml_content:
+                                                    # 从XML内容中提取cdnthumburl
+                                                    cdnthumburl_match = re.search(r'cdnthumburl="([^"]*)"', xml_content)
+                                                    if cdnthumburl_match:
+                                                        image_url = cdnthumburl_match.group(1)
+                                                        logger.debug(f"[chat_channel] 从XML内容中提取到cdnthumburl: {image_url}")
+                                                        context["quoted_image_url"] = image_url
+
+                                                        # 提取length（图片大小）
+                                                        length_match = re.search(r'length="([^"]*)"', xml_content)
+                                                        if length_match:
+                                                            length = length_match.group(1)
+                                                            logger.debug(f"[chat_channel] 从XML内容中提取到length: {length}")
+                                                            context["quoted_image_length"] = length
+
+                                                        # 提取svrid（消息ID）
+                                                        svrid_match = re.search(r'<svrid>(.*?)</svrid>', xml_content)
+                                                        if svrid_match:
+                                                            svrid = svrid_match.group(1)
+                                                            logger.debug(f"[chat_channel] 从XML内容中提取到svrid: {svrid}")
+                                                            context["quoted_message"]["svrid"] = svrid
+                                                            context["quoted_message"]["NewMsgId"] = svrid
+
+                                                            # 获取群ID
+                                                            group_id = context.kwargs.get("group_id")
+                                                            fromusr_match = re.search(r'<fromusr>(.*?)</fromusr>', xml_content)
+                                                            if fromusr_match:
+                                                                group_id = fromusr_match.group(1)
+                                                                logger.debug(f"[chat_channel] 从XML内容中提取到fromusr: {group_id}")
+
+                                                            # 提取图片大小
+                                                            length_match = re.search(r'length="([^"]*)"', xml_content)
+                                                            data_len = 345519  # 默认大小
+                                                            if length_match:
+                                                                try:
+                                                                    data_len = int(length_match.group(1))
+                                                                    logger.debug(f"[chat_channel] 从XML内容中提取到length: {data_len}")
+                                                                except ValueError:
+                                                                    logger.error(f"[chat_channel] 无法将length转换为整数: {length_match.group(1)}")
+
+                                                            # 这里需要调用channel对象的方法来下载图片
+                                                            if "channel" in context.kwargs and hasattr(context.kwargs["channel"], "download_image"):
+                                                                # 将提取到的参数传递给download_image方法
+                                                                # 修改wx849_channel.py中的download_image方法，使其使用传入的data_len
+                                                                setattr(context.kwargs["channel"], "data_len", data_len)  # 保存图片大小供download_image方法使用
+                                                                image_path = context.kwargs["channel"].download_image(svrid, group_id)
+                                                                if image_path and os.path.exists(image_path):
+                                                                    logger.debug(f"[chat_channel] 成功使用消息ID下载图片: {image_path}")
+                                                                    context["quoted_image_path"] = image_path
+                                                                    # 使用已经导入的Reply和ReplyType
+                                                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，已下载]"
+                                                                    return Reply(ReplyType.TEXT, enhanced_content)
+                                                                else:
+                                                                    logger.error(f"[chat_channel] 使用消息ID下载图片失败")
+                                                            else:
+                                                                logger.error(f"[chat_channel] 无法使用消息ID下载图片，channel对象不可用或没有download_image方法")
+
+                                                        logger.debug(f"[chat_channel] 从XML内容中提取到cdnthumburl")
+                                            except Exception as e:
+                                                logger.error(f"[chat_channel] 查找XML内容异常: {e}")
+
+                                        if cdnthumburl_match:
+                                            image_url = cdnthumburl_match.group(1)
+                                            logger.debug(f"[chat_channel] 从原始日志行中提取到cdnthumburl: {image_url}")
+                                            context["quoted_image_url"] = image_url
+
+                                            # 下载图片
+                                            try:
+                                                # 创建临时目录
+                                                import os
+                                                import tempfile
+                                                import requests
+                                                import uuid
+
+                                                # 创建临时文件名
+                                                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tmp")
+                                                if not os.path.exists(temp_dir):
+                                                    os.makedirs(temp_dir)
+
+                                                # 生成唯一的文件名
+                                                image_filename = f"quoted_image_{uuid.uuid4().hex}.jpg"
+                                                image_path = os.path.join(temp_dir, image_filename)
+
+                                                # 下载图片
+                                                logger.debug(f"[chat_channel] 尝试下载引用图片: {image_url}")
+                                                response = requests.get(image_url, timeout=10)
+                                                if response.status_code == 200:
+                                                    with open(image_path, 'wb') as f:
+                                                        f.write(response.content)
+                                                    logger.debug(f"[chat_channel] 成功下载引用图片: {image_path}")
+
+                                                    # 添加图片路径到上下文
+                                                    context["quoted_image_path"] = image_path
+                                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，已下载]"
+                                                else:
+                                                    logger.error(f"[chat_channel] 下载引用图片失败，状态码: {response.status_code}")
+                                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，但下载失败]"
+                                            except Exception as e:
+                                                logger.error(f"[chat_channel] 下载引用图片异常: {e}")
+                                                enhanced_content = f"{context.content}\n\n[引用了一张图片，但处理过程中出错]"
+                                        else:
+                                            enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法获取图片URL]"
+                                            logger.debug(f"[chat_channel] 增强消息内容，添加图片引用信息(无URL): {enhanced_content}")
+                                    except Exception as e:
+                                        logger.error(f"[chat_channel] 从原始日志行中提取图片信息失败: {e}")
+                                        enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法提取图片信息]"
+                                else:
+                                    enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法获取消息ID或图片URL]"
+                                    logger.debug(f"[chat_channel] 增强消息内容，添加图片引用信息(无消息ID或URL): {enhanced_content}")
+                        else:
+                            enhanced_content = f"{context.content}\n\n[引用了一张图片，但无法获取图片URL或消息ID]"
+                            logger.debug(f"[chat_channel] 增强消息内容，添加图片引用信息(无URL或消息ID): {enhanced_content}")
+                    # 如果引用的是文本消息
+                    elif quoted_content and quoted_nickname:
+                        enhanced_content = f"{context.content}\n\n引用 {quoted_nickname} 的消息: \"{quoted_content}\""
+                        logger.debug(f"[chat_channel] 增强消息内容，添加引用信息: {enhanced_content}")
+
+                    # 创建一个新的文本类型上下文
+                    text_context = self._compose_context(ContextType.TEXT, enhanced_content, **context.kwargs)
+                    if text_context:
+                        # 使用文本处理逻辑处理消息
+                        reply = super().build_reply_content(text_context.content, text_context)
+                    else:
+                        logger.error("[chat_channel] 创建文本上下文失败")
+                else:
+                    # 如果不是@机器人的消息，不处理
+                    logger.debug("[chat_channel] 忽略非@机器人的XML消息")
+                    pass
             else:
                 logger.warning("[chat_channel] unknown context type: {}".format(context.type))
                 return

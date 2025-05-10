@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Any
 import asyncio
 import io
+import html
+import re
 
 from loguru import logger
 
@@ -42,6 +44,12 @@ class XYBot:
                 main_config = {}
 
         self.ignore_protection = main_config.get("XYBot", {}).get("ignore-protection", False)
+
+        # 读取群聊唤醒词配置
+        xybot_config = main_config.get("XYBot", {})
+        self.group_wakeup_words = xybot_config.get("group-wakeup-words", ["bot"])
+        self.enable_group_wakeup = xybot_config.get("enable-group-wakeup", True)
+        logger.info(f"群聊唤醒词: {self.group_wakeup_words}, 启用状态: {self.enable_group_wakeup}")
 
         # 从配置文件中读取消息过滤设置
         try:
@@ -506,7 +514,7 @@ class XYBot:
 
     async def process_text_message(self, message: Dict[str, Any]):
         """处理文本消息"""
-        message["Content"] = message.get("Content", {}).get("string", "")
+        message["Content"] = message.get("Content", {}).get("string", "").replace("\n", "\\n")#修复文本消息里面包含有回车的情况
 
         if message["FromWxid"].endswith("@chatroom"):  # 群聊消息
             message["IsGroup"] = True
@@ -554,7 +562,13 @@ class XYBot:
                         message["SenderWxid"], message["Ats"], message["Content"])
             if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
                 if self.ignore_protection or not protector.check(14400):
-                    await EventManager.emit("at_message", self.bot, message)
+                    # 先检查消息是否包含唤醒词
+                    wakeup_handled = await self.check_wakeup_words(message)
+
+                    # 如果没有唤醒词或唤醒词处理返回继续，则使用默认的at_message事件
+                    if not wakeup_handled:
+                        logger.debug("未检测到唤醒词，使用默认的at_message事件处理")
+                        await EventManager.emit("at_message", self.bot, message)
                 else:
                     logger.warning("风控保护: 新设备登录后4小时内请挂机")
             return
@@ -563,7 +577,12 @@ class XYBot:
                     message.get("MsgId", ""), message["FromWxid"],
                     message["SenderWxid"], message["Ats"], message["Content"])
 
-        if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = self.check_group_wakeup_word(message)
+
+        # 群聊消息和私聊消息都处理
+        # 无论是否@机器人，都处理消息
+        if should_process and self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("text_message", self.bot, message)
             else:
@@ -785,7 +804,10 @@ class XYBot:
             is_group=message["IsGroup"]
         )
 
-        if self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
+        # 检查是否需要处理该消息（群聊唤醒词检查）
+        should_process = self.check_group_wakeup_word(message)
+
+        if should_process and self.ignore_check(message["FromWxid"], message["ActualUserWxid"]):
             if self.ignore_protection or not protector.check(14400):
                 await EventManager.emit("emoji_message", self.bot, message)
             else:
@@ -937,6 +959,26 @@ class XYBot:
                 quote_message["md5"] = quote_appmsg.find("md5").text if isinstance(quote_appmsg.find("md5"), ET.Element) else ""
                 quote_message["statextstr"] = quote_appmsg.find("statextstr").text if isinstance(quote_appmsg.find("statextstr"), ET.Element) else ""
                 quote_message["directshare"] = int(quote_appmsg.find("directshare").text) if isinstance(quote_appmsg.find("directshare"), ET.Element) else 0
+
+            elif quote_message["MsgType"] == 3:  # 处理引用图片，以这个cdnthumbaeskey为图片缓存的唯一标识，方便后续在dow插件里根据cdnthumbaeskey获取到相应的图片
+                quote_message["NewMsgId"] = refermsg.find("svrid").text
+                quote_message["ToWxid"] = refermsg.find("fromusr").text
+                quote_message["FromWxid"] = refermsg.find("chatusr").text
+                quote_message["Nickname"] = refermsg.find("displayname").text
+                quote_message["MsgSource"] = refermsg.find("msgsource").text
+                quote_message["Content"] = refermsg.find("content").text
+                quote_message["Createtime"] = refermsg.find("createtime").text
+
+                quote_root = refermsg.find("content").text
+                unescaped_inner_xml = html.unescape(quote_root)
+                match = re.search(r'cdnthumbaeskey="([^"]+)"', unescaped_inner_xml)
+                if match:
+                    cdnthumbaeskey = match.group(1)
+                    logger.debug(f"cdnthumbaeskey: {cdnthumbaeskey}")
+                    quote_message["cdnthumbaeskey"]  = cdnthumbaeskey
+                else:
+                    logger.debug("cdnthumbaeskey not found.")
+                    quote_message["cdnthumbaeskey"] = ""
 
         except Exception as e:
             logger.error("解析引用消息失败: {}, 完整内容: {}", e, message["Content"])
@@ -1108,6 +1150,381 @@ class XYBot:
                 await EventManager.emit("pat_message", self.bot, message)
             else:
                 logger.warning("风控保护: 新设备登录后4小时内请挂机")
+
+    async def check_wakeup_words(self, message: Dict[str, Any]) -> bool:
+        """检查消息是否包含任何插件的唤醒词或触发词
+
+        Args:
+            message: 消息字典
+
+        Returns:
+            bool: 如果消息包含唤醒词或触发词并且已经被处理，返回True；否则返回False
+        """
+        from utils.plugin_manager import plugin_manager
+
+        content = message.get("Content", "").strip()
+        if not content:
+            return False
+
+        # 移除@部分，以便正确匹配唤醒词或触发词
+        # 检查消息是否包含Ats字段，并且机器人的wxid在Ats列表中
+        if "Ats" in message and self.wxid in message["Ats"]:
+            # 尝试从消息内容中移除@部分
+            # 常见的机器人名称列表
+            robot_names = ["小小x", "小x", "机器人"]
+            if self.nickname:
+                robot_names.append(self.nickname)
+
+            # 尝试从群成员列表中获取机器人的群昵称
+            if message["FromWxid"].endswith("@chatroom"):
+                try:
+                    # 异步获取群成员列表
+                    members = await self.get_chatroom_member_list(message["FromWxid"])
+                    for member in members:
+                        if member.get("wxid") == self.wxid and member.get("nickname"):
+                            robot_names.append(member["nickname"])
+                            logger.debug(f"从群成员列表中获取到机器人的群昵称: {member['nickname']}")
+                            break
+                except Exception as e:
+                    logger.warning(f"获取群成员列表失败: {e}")
+
+            # 移除@机器人前缀
+            original_content = content
+            for robot_name in robot_names:
+                at_prefix = f"@{robot_name}"
+                if content.startswith(at_prefix):
+                    content = content[len(at_prefix):].strip()
+                    logger.debug(f"移除@{robot_name}后的查询内容: {content}")
+                    break
+
+            # 如果没有找到匹配的机器人名称，尝试使用正则表达式移除@部分
+            if content == original_content:
+                import re
+                # 匹配开头的@xxx部分
+                at_pattern = r'^@[^\s]+'
+                match = re.search(at_pattern, content)
+                if match:
+                    at_part = match.group(0)
+                    content = content[len(at_part):].strip()
+                    logger.debug(f"使用正则表达式移除@部分: {at_part}，剩余内容: {content}")
+
+        # 如果内容为空，则不处理
+        if not content:
+            return False
+
+        # 保存原始消息内容，以便在处理完成后恢复
+        original_message_content = message["Content"]
+        # 更新消息内容为处理后的内容，以便插件处理
+        message["Content"] = content
+
+        try:
+            # 遍历所有已加载的插件，按优先级排序
+            plugins_by_priority = {}
+            for plugin_name, plugin in plugin_manager.plugins.items():
+                # 获取插件的优先级
+                priority = 50  # 默认优先级
+
+                # 检查插件是否有处理@消息的方法
+                for method_name in dir(plugin):
+                    method = getattr(plugin, method_name)
+                    if hasattr(method, '_event_type') and method._event_type == 'at_message':
+                        # 如果有，获取其优先级
+                        priority = getattr(method, '_priority', 50)
+                        break
+
+                # 将插件添加到对应优先级的列表中
+                if priority not in plugins_by_priority:
+                    plugins_by_priority[priority] = []
+                plugins_by_priority[priority].append((plugin_name, plugin))
+
+            # 按优先级从高到低排序
+            priorities = sorted(plugins_by_priority.keys(), reverse=True)
+
+            # 检查每个插件的唤醒词
+            for priority in priorities:
+                for plugin_name, plugin in plugins_by_priority[priority]:
+                    # 1. 检查插件是否有唤醒词属性
+                    if hasattr(plugin, 'wakeup_words') and plugin.wakeup_words:
+                        for wakeup_word in plugin.wakeup_words:
+                            if wakeup_word.lower() in content.lower():
+                                logger.info(f"检测到插件 {plugin_name} 的唤醒词: {wakeup_word}")
+                                # 触发该插件的at_message事件
+                                for method_name in dir(plugin):
+                                    method = getattr(plugin, method_name)
+                                    if hasattr(method, '_event_type') and method._event_type == 'at_message':
+                                        # 调用插件的at_message处理方法
+                                        result = await method(self.bot, message)
+                                        # 如果插件返回False，表示阻止后续处理
+                                        if result is False:
+                                            return True
+                                        break
+
+                    # 2. 检查Dify插件的特殊处理
+                    if plugin_name == "Dify" and hasattr(plugin, 'wakeup_word_to_model') and plugin.wakeup_word_to_model:
+                        for wakeup_word in plugin.wakeup_word_to_model.keys():
+                            content_lower = content.lower()
+                            wakeup_lower = wakeup_word.lower()
+                            if content_lower.startswith(wakeup_lower) or f" {wakeup_lower}" in content_lower:
+                                logger.info(f"检测到Dify插件的唤醒词: {wakeup_word}")
+                                # 触发Dify插件的at_message事件
+                                for method_name in dir(plugin):
+                                    method = getattr(plugin, method_name)
+                                    if hasattr(method, '_event_type') and method._event_type == 'at_message':
+                                        # 调用插件的at_message处理方法
+                                        result = await method(self.bot, message)
+                                        # 如果插件返回False，表示阻止后续处理
+                                        if result is False:
+                                            return True
+                                        break
+
+                    # 3. 检查插件的触发词属性（如YujieSajiao插件的trigger_words）
+                    if hasattr(plugin, 'trigger_words') and plugin.trigger_words:
+                        for trigger_word in plugin.trigger_words:
+                            if trigger_word.lower() in content.lower():
+                                logger.info(f"检测到插件 {plugin_name} 的触发词: {trigger_word}")
+
+                                # 检查插件是否有处理文本消息的方法
+                                text_message_method = None
+                                for method_name in dir(plugin):
+                                    method = getattr(plugin, method_name)
+                                    if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                        text_message_method = method
+                                        break
+
+                                if text_message_method:
+                                    # 创建一个临时消息对象，模拟文本消息
+                                    temp_message = message.copy()
+                                    # 使用处理后的内容（移除了@部分）
+                                    temp_message["Content"] = content
+
+                                    # 调用插件的text_message处理方法
+                                    result = await text_message_method(self.bot, temp_message)
+
+                                    # 如果插件返回False，表示阻止后续处理
+                                    if result is False:
+                                        return True
+                                break
+
+                    # 4. 检查插件的commands属性（常见于AI对话插件）
+                    if hasattr(plugin, 'commands') and plugin.commands:
+                        for command in plugin.commands:
+                            # 检查两种情况：
+                            # 1. 内容以命令开头（前缀匹配）
+                            # 2. 内容的第一个词与命令完全匹配（完全匹配，用于FastGPT等插件）
+                            content_first_word = content.split(" ", 1)[0].lower()
+                            if content.lower().startswith(command.lower()) or content_first_word == command.lower():
+                                logger.info(f"检测到插件 {plugin_name} 的命令: {command}")
+
+                                # 检查插件是否有处理文本消息的方法
+                                text_message_method = None
+                                for method_name in dir(plugin):
+                                    method = getattr(plugin, method_name)
+                                    if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                        text_message_method = method
+                                        break
+
+                                if text_message_method:
+                                    # 创建一个临时消息对象，模拟文本消息
+                                    temp_message = message.copy()
+                                    # 使用处理后的内容（移除了@部分）
+                                    temp_message["Content"] = content
+
+                                    # 调用插件的text_message处理方法
+                                    result = await text_message_method(self.bot, temp_message)
+
+                                    # 如果插件返回False，表示阻止后续处理
+                                    if result is False:
+                                        return True
+                                break
+
+                    # 4.1 检查插件的command属性（单数形式，如VideoDemand插件）
+                    if hasattr(plugin, 'command') and plugin.command:
+                        # 处理列表类型的command
+                        if isinstance(plugin.command, list):
+                            for cmd in plugin.command:
+                                if isinstance(cmd, str) and content.lower() == cmd.lower():
+                                    logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {cmd}")
+
+                                    # 检查插件是否有处理文本消息的方法
+                                    text_message_method = None
+                                    for method_name in dir(plugin):
+                                        method = getattr(plugin, method_name)
+                                        if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                            text_message_method = method
+                                            break
+
+                                    if text_message_method:
+                                        # 创建一个临时消息对象，模拟文本消息
+                                        temp_message = message.copy()
+                                        # 使用处理后的内容（移除了@部分）
+                                        temp_message["Content"] = content
+
+                                        # 调用插件的text_message处理方法
+                                        result = await text_message_method(self.bot, temp_message)
+
+                                        # 如果插件返回False，表示阻止后续处理
+                                        if result is False:
+                                            return True
+                                    break
+                        # 处理字符串类型的command
+                        elif isinstance(plugin.command, str) and content.lower() == plugin.command.lower():
+                            logger.info(f"检测到插件 {plugin_name} 的命令(单数形式): {plugin.command}")
+
+                            # 检查插件是否有处理文本消息的方法
+                            text_message_method = None
+                            for method_name in dir(plugin):
+                                method = getattr(plugin, method_name)
+                                if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                    text_message_method = method
+                                    break
+
+                            if text_message_method:
+                                # 创建一个临时消息对象，模拟文本消息
+                                temp_message = message.copy()
+                                # 使用处理后的内容（移除了@部分）
+                                temp_message["Content"] = content
+
+                                # 调用插件的text_message处理方法
+                                result = await text_message_method(self.bot, temp_message)
+
+                                # 如果插件返回False，表示阻止后续处理
+                                if result is False:
+                                    return True
+
+                    # 5. 检查插件的所有可能的command属性
+                    # 自动检测插件的所有属性，查找可能的命令
+                    for attr_name in dir(plugin):
+                        # 只检查包含'command'的属性名，并且不是方法或内置属性
+                        if 'command' in attr_name.lower() and not attr_name.startswith('__') and not callable(getattr(plugin, attr_name)):
+                            command_value = getattr(plugin, attr_name)
+
+                            # 处理字符串类型的命令
+                            if isinstance(command_value, str) and content.lower() == command_value.lower():
+                                logger.info(f"检测到插件 {plugin_name} 的命令: {command_value}")
+
+                                # 检查插件是否有处理文本消息的方法
+                                text_message_method = None
+                                for method_name in dir(plugin):
+                                    method = getattr(plugin, method_name)
+                                    if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                        text_message_method = method
+                                        break
+
+                                if text_message_method:
+                                    # 创建一个临时消息对象，模拟文本消息
+                                    temp_message = message.copy()
+                                    # 使用处理后的内容（移除了@部分）
+                                    temp_message["Content"] = content
+
+                                    # 调用插件的text_message处理方法
+                                    result = await text_message_method(self.bot, temp_message)
+
+                                    # 如果插件返回False，表示阻止后续处理
+                                    if result is False:
+                                        return True
+                                break
+
+                            # 处理列表类型的命令
+                            elif isinstance(command_value, list):
+                                for cmd in command_value:
+                                    if isinstance(cmd, str) and content.lower() == cmd.lower():
+                                        logger.info(f"检测到插件 {plugin_name} 的命令: {cmd}")
+
+                                        # 检查插件是否有处理文本消息的方法
+                                        text_message_method = None
+                                        for method_name in dir(plugin):
+                                            method = getattr(plugin, method_name)
+                                            if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                                text_message_method = method
+                                                break
+
+                                        if text_message_method:
+                                            # 创建一个临时消息对象，模拟文本消息
+                                            temp_message = message.copy()
+                                            # 使用处理后的内容（移除了@部分）
+                                            temp_message["Content"] = content
+
+                                            # 调用插件的text_message处理方法
+                                            result = await text_message_method(self.bot, temp_message)
+
+                                            # 如果插件返回False，表示阻止后续处理
+                                            if result is False:
+                                                return True
+                                        break
+
+                    # 6. 检查插件的command_prefix属性（如DifyConversationManager插件的command_prefix）
+                    if hasattr(plugin, 'command_prefix') and isinstance(plugin.command_prefix, str):
+                        prefix = plugin.command_prefix
+                        if content.startswith(prefix):
+                            logger.info(f"检测到插件 {plugin_name} 的命令前缀: {prefix}")
+
+                            # 检查插件是否有处理文本消息的方法
+                            text_message_method = None
+                            for method_name in dir(plugin):
+                                method = getattr(plugin, method_name)
+                                if hasattr(method, '_event_type') and method._event_type == 'text_message':
+                                    text_message_method = method
+                                    break
+
+                            if text_message_method:
+                                # 创建一个临时消息对象，模拟文本消息
+                                temp_message = message.copy()
+                                # 使用处理后的内容（移除了@部分）
+                                temp_message["Content"] = content
+
+                                # 调用插件的text_message处理方法
+                                result = await text_message_method(self.bot, temp_message)
+
+                                # 如果插件返回False，表示阻止后续处理
+                                if result is False:
+                                    return True
+
+                    # 6. 通用处理：检查插件的at_message方法
+                    # 许多插件没有明确定义命令属性，而是在处理方法中直接检查命令
+                    # 我们直接调用插件的at_message方法，让插件自己判断是否处理该消息
+                    for method_name in dir(plugin):
+                        method = getattr(plugin, method_name)
+                        if hasattr(method, '_event_type') and method._event_type == 'at_message':
+                            # 调用插件的at_message处理方法
+                            result = await method(self.bot, message)
+                            # 如果插件返回False，表示它处理了消息并阻止后续处理
+                            if result is False:
+                                logger.info(f"插件 {plugin_name} 处理了@消息")
+                                return True
+                            # 如果插件返回True，表示它没有处理消息，继续检查其他插件
+                            break
+        finally:
+            # 恢复原始消息内容
+            message["Content"] = original_message_content
+
+        return False
+
+    def check_group_wakeup_word(self, message: Dict[str, Any]) -> bool:
+        """检查群聊消息是否包含唤醒词
+
+        Args:
+            message: 消息字典
+
+        Returns:
+            bool: 如果消息应该被处理返回True，否则返回False
+        """
+        # 如果不是群聊消息或者未启用群聊唤醒词功能，直接返回True（继续处理）
+        if not message.get("IsGroup", False) or not self.enable_group_wakeup:
+            return True
+
+        content = message.get("Content", "").strip()
+        # 检查消息是否以任一唤醒词开头
+        for wakeup_word in self.group_wakeup_words:
+            if content.lower().startswith(wakeup_word.lower()):
+                # 移除唤醒词，保留实际命令内容
+                message["OriginalContent"] = message["Content"]
+                message["Content"] = content[len(wakeup_word):].strip()
+                logger.info(f"检测到群聊唤醒词: {wakeup_word}, 处理后内容: {message['Content']}")
+                return True
+
+        # 没有唤醒词，不处理该消息
+        logger.debug(f"群聊消息未包含唤醒词，忽略处理: {content}")
+        return False
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
         # 过滤公众号消息（公众号wxid通常以gh_开头）

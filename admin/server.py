@@ -3496,6 +3496,9 @@ except:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
             # 写入文件内容
+            # 我们不再自动转义TOML文件中的双引号，因为这会破坏文件格式
+            # 对于通知设置等特定API，我们在API层面处理双引号转义
+
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write(content)
 
@@ -6957,9 +6960,13 @@ async def api_update_notification_settings(request: Request):
                             elif isinstance(sub_value, (int, float)):
                                 f.write(f"{sub_key} = {sub_value}\n")
                             else:
-                                f.write(f"{sub_key} = \"{sub_value}\"\n")
+                                # 转义字符串中的双引号，防止TOML格式错误
+                                escaped_value = str(sub_value).replace('"', '\\"')
+                                f.write(f"{sub_key} = \"{escaped_value}\"\n")
                     else:
-                        f.write(f"{key} = \"{value}\"\n")
+                        # 转义字符串中的双引号，防止TOML格式错误
+                        escaped_value = str(value).replace('"', '\\"')
+                        f.write(f"{key} = \"{escaped_value}\"\n")
                 f.write("\n")
 
         # 重新加载通知服务
