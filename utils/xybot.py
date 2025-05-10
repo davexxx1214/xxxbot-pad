@@ -1513,6 +1513,9 @@ class XYBot:
             return True
 
         content = message.get("Content", "").strip()
+        # 新增：先去掉"昵称: 换行"前缀
+        import re
+        content = re.sub(r"^[^@\n]+:\s*\n", "", content)
         # 检查消息是否以任一唤醒词开头
         for wakeup_word in self.group_wakeup_words:
             if content.lower().startswith(wakeup_word.lower()):
