@@ -137,7 +137,7 @@ class Sum4all(PluginBase):
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
             return True
-        key = f"{from_wxid}|{sender_wxid}" if message.get("IsGroup") else sender_wxid
+        key = self.get_waiting_key(message)
         waiting_info = self.waiting_vision.get(key)
         if not waiting_info:
             logger.info(f"Sum4all: 当前无待识图状态: {key}")

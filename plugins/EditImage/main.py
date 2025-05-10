@@ -105,7 +105,7 @@ class EditImage(PluginBase):
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"EditImage: 消息ID {msg_id} 已处理或无效，跳过")
             return True
-        key = f"{from_wxid}|{sender_wxid}" if message.get("IsGroup") else sender_wxid
+        key = self.get_waiting_key(message)
         waiting_info = self.waiting_edit_image.get(key)
         if not waiting_info:
             logger.info(f"EditImage: 当前无待垫图状态: {key}")
