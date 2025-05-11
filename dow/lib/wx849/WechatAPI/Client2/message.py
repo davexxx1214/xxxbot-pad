@@ -179,6 +179,16 @@ class MessageMixin(WechatAPIClientBase):
         else:
             raise ValueError("Argument 'image' can only be str, bytes, or os.PathLike")
 
+        # Ensure the image_base64 string has a data URI prefix
+        if not image.startswith("data:image"):
+            logger.debug("Image base64 does not have a data URI prefix. Adding 'data:image/jpeg;base64,'")
+            image = "data:image/jpeg;base64," + image
+        elif image.startswith("data:image/png;base64,"): # Correctly handle if it was already PNG
+            logger.debug("Image base64 already has PNG data URI prefix.")
+        elif image.startswith("data:image/jpeg;base64,"):
+             logger.debug("Image base64 already has JPEG data URI prefix.")
+        # else: if it's some other data:image/xxx;base64, leave it as is.
+
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": image}
             response = await session.post(f'http://{self.ip}:{self.port}/api/Msg/UploadImg', json=json_param)
@@ -241,6 +251,25 @@ class MessageMixin(WechatAPIClientBase):
                 image_base64 = base64.b64encode(f.read()).decode()
         else:
             raise ValueError("image should be str, bytes, or path")
+
+        # Ensure the image_base64 string for the cover has a data URI prefix
+        if image_base64: # Only proceed if image_base64 is not empty or None
+            if not image_base64.startswith("data:image"):
+                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) does not have a data URI prefix. Adding 'data:image/jpeg;base64,'")
+                image_base64 = "data:image/jpeg;base64," + image_base64
+            elif image_base64.startswith("data:image/png;base64,"):
+                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has PNG data URI prefix.")
+            elif image_base64.startswith("data:image/jpeg;base64,"):
+                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has JPEG data URI prefix.")
+            # else: if it's some other data:image/xxx;base64, or empty, leave it as is for now.
+        else:
+            # If after all conversions, image_base64 is empty or None, API might fail or use its own default.
+            # wx849_channel.py uses a 1x1 pixel PNG if cover is None.
+            # For now, we rely on the API's behavior if image_base64 is not provided.
+            # Alternatively, we could insert a minimal default like wx849_channel does:
+            # image_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+            # logger.debug("[MessageMixin] Cover image_base64 is empty. API might use its own default or fail.")
+            pass
 
         # 打印预估时间，300KB/s
         predict_time = int(file_len / 1024 / 300)
