@@ -30,6 +30,8 @@ import re
 import base64
 import subprocess
 import math
+from io import BytesIO
+from PIL import Image
 
 # 增大日志行长度限制，以便完整显示XML内容
 try:
@@ -3718,10 +3720,12 @@ class WX849Channel(ChatChannel):
                     logger.warning(f"[WX849] 发送消息可能失败: 接收者: {receiver}, 结果: {result}")
 
             elif reply.type == ReplyType.IMAGE or reply.type == ReplyType.IMAGE_URL:
+                result = None
                 # 处理图片消息发送
                 image_path = reply.content
                 logger.debug(f"[WX849] 开始发送图片, {'URL' if reply.type == ReplyType.IMAGE_URL else '文件路径'}={image_path}")
                 try:
+                    tmp_path = os.path.join(get_appdata_dir(), f"tmp_img_{int(time.time())}.jpg")
                     # 如果是图片URL，先下载图片
                     if reply.type == ReplyType.IMAGE_URL:
                         # 使用aiohttp异步下载图片
@@ -3732,22 +3736,25 @@ class WX849Channel(ChatChannel):
                                     return
 
                                 # 创建临时文件保存图片
-                                tmp_path = os.path.join(get_appdata_dir(), f"tmp_img_{int(time.time())}.jpg")
                                 with open(tmp_path, 'wb') as f:
                                     f.write(await response.read())
-
                                 # 使用下载后的本地文件路径
                                 image_path = tmp_path
+                    if reply.type == ReplyType.IMAGE:
+                        image_io: BytesIO = image_path
+                        image_io.seek(0)  # 重置指针到起始位置
+                        # 保存为本地文件
+                        with open(tmp_path, "wb") as f:
+                            f.write(image_io.getvalue())  # 直接写入二进制数据
+                        image_path = tmp_path
 
                     # 发送图片文件，传递上下文对象 - 直接使用异步调用
                     result = await self._send_image(receiver, image_path, context)
-
                     # 如果是URL类型，删除临时文件
-                    if reply.type == ReplyType.IMAGE_URL:
-                        try:
-                            os.remove(tmp_path)
-                        except Exception as e:
-                            logger.debug(f"[WX849] 删除临时图片文件失败: {e}")
+                    try:
+                        os.remove(tmp_path)
+                    except Exception as e:
+                        logger.debug(f"[WX849] 删除临时图片文件失败: {e}")
 
                     if result:
                         logger.info(f"[WX849] 发送图片成功: 接收者: {receiver}")

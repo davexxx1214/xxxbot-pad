@@ -120,6 +120,10 @@ async def main():
         with open(config_path, "rb") as f:
             config = tomllib.load(f)
         logger.success("读取主设置成功")
+        
+        # 输出协议版本信息用于调试
+        protocol_version = config.get("Protocol", {}).get("version", "849")
+        logger.info(f"当前配置的协议版本: {protocol_version}")
     except Exception as e:
         logger.error(f"读取主设置失败: {e}")
         return
