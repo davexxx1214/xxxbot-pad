@@ -13,6 +13,8 @@ from PIL import Image
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
 import regex  # 不是re，是regex库，支持\p{Zs}
+import tempfile
+import fal_client
 
 
 class Falclient(PluginBase):
@@ -28,7 +30,6 @@ class Falclient(PluginBase):
                 config = tomllib.load(f)
             plugin_config = config["Falclient"]
             self.enable = plugin_config["enable"]
-            self.robot_names = plugin_config.get("robot_names", [])
             self.fal_img_prefix = plugin_config.get("fal_img_prefix", "图生视频")
             self.fal_text_prefix = plugin_config.get("fal_text_prefix", "文生视频")
             self.fal_kling_img_model = plugin_config.get("fal_kling_img_model", "kling-video/v2/master/image-to-video")
@@ -70,10 +71,22 @@ class Falclient(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
+            # 新增：先回复收到请求
+            notice = "你的图生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
             return False
         # 文生视频
         if content.startswith(self.fal_text_prefix):
             user_prompt = content[len(self.fal_text_prefix):].strip()
+            # 新增：先回复收到请求
+            notice = "你的文生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_text2video(bot, message, user_prompt)
             return False
         return True
@@ -98,11 +111,23 @@ class Falclient(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
+            # 新增：先回复收到请求
+            notice = "你的图生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
             return False
         # 文生视频
         if self.fal_text_prefix in content:
             idx = content.find(self.fal_text_prefix)
             user_prompt = content[idx + len(self.fal_text_prefix):].strip()
+            # 新增：先回复收到请求
+            notice = "你的文生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_text2video(bot, message, user_prompt)
             return False
         return True
@@ -181,26 +206,28 @@ class Falclient(PluginBase):
 
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
+        tmp_file_path = None
         try:
-            # 上传图片到fal，获取url
-            upload_url = f"https://fal.run/upload"
-            headers = {"Authorization": f"Key {self.fal_api_key}"}
-            data = aiohttp.FormData()
-            data.add_field('file', image_bytes, filename='image.png', content_type='image/png')
+            # 1. 保存图片为临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                tmp_file.write(image_bytes)
+                tmp_file_path = tmp_file.name
+
+            # 2. 上传图片获取URL
+            client = fal_client.SyncClient(key=self.fal_api_key)
+            image_url = client.upload_file(tmp_file_path)
+            if not image_url:
+                await self.send_video_url(bot, message, "图片上传失败")
+                return
+
+            # 3. 调用生成视频API
+            api_url = f"https://fal.run/fal-ai/{self.fal_kling_img_model}"
+            headers = {
+                "Authorization": f"Key {self.fal_api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {"prompt": prompt, "image_url": image_url}
             async with aiohttp.ClientSession() as session:
-                async with session.post(upload_url, headers=headers, data=data) as resp:
-                    if resp.status == 200:
-                        upload_result = await resp.json()
-                        image_url = upload_result.get("url")
-                        if not image_url:
-                            await self.send_video_url(bot, message, "图片上传失败")
-                            return
-                    else:
-                        await self.send_video_url(bot, message, f"图片上传失败: {resp.status}")
-                        return
-                # 调用生成视频API
-                api_url = f"https://fal.run/fal-ai/{self.fal_kling_img_model}"
-                payload = {"prompt": prompt, "image_url": image_url}
                 async with session.post(api_url, headers=headers, json=payload) as resp2:
                     if resp2.status == 200:
                         result = await resp2.json()
@@ -213,6 +240,12 @@ class Falclient(PluginBase):
                         await self.send_video_url(bot, message, f"API请求失败: {resp2.status}")
         except Exception as e:
             await self.send_video_url(bot, message, f"API调用异常: {e}")
+        finally:
+            try:
+                if tmp_file_path:
+                    os.remove(tmp_file_path)
+            except Exception:
+                pass
 
     async def send_video_url(self, bot, message, video_url):
         # 直接发送视频URL
