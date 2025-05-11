@@ -253,7 +253,12 @@ class MessageMixin(WechatAPIClientBase):
             raise ValueError("image should be str, bytes, or path")
 
         # Ensure the image_base64 string for the cover has a data URI prefix
-        if image_base64: # Only proceed if image_base64 is not empty or None
+        if not image_base64: # If image_base64 is empty or None after processing (e.g. fallback.png failed)
+            logger.warning("[MessageMixin] Cover image_base64 is empty. Using 1x1 transparent PNG as fallback.")
+            image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+            # Now the following block will add the jpeg prefix to this 1x1 png
+
+        if image_base64: # Only proceed if image_base64 is not empty or None (it should be the 1x1 png if it was empty before)
             if not image_base64.startswith("data:image"):
                 logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) does not have a data URI prefix. Adding 'data:image/jpeg;base64,'")
                 image_base64 = "data:image/jpeg;base64," + image_base64
@@ -261,15 +266,7 @@ class MessageMixin(WechatAPIClientBase):
                 logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has PNG data URI prefix.")
             elif image_base64.startswith("data:image/jpeg;base64,"):
                 logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has JPEG data URI prefix.")
-            # else: if it's some other data:image/xxx;base64, or empty, leave it as is for now.
-        else:
-            # If after all conversions, image_base64 is empty or None, API might fail or use its own default.
-            # wx849_channel.py uses a 1x1 pixel PNG if cover is None.
-            # For now, we rely on the API's behavior if image_base64 is not provided.
-            # Alternatively, we could insert a minimal default like wx849_channel does:
-            # image_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-            # logger.debug("[MessageMixin] Cover image_base64 is empty. API might use its own default or fail.")
-            pass
+        # No explicit else here, as image_base64 should now always be populated if it reached this point from an empty state.
 
         # 打印预估时间，300KB/s
         predict_time = int(file_len / 1024 / 300)
