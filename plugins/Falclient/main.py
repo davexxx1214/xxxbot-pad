@@ -15,6 +15,7 @@ from utils.decorators import on_text_message, on_at_message, on_quote_message, o
 import regex  # 不是re，是regex库，支持\p{Zs}
 import tempfile
 import fal_client
+from pathlib import Path
 
 
 class Falclient(PluginBase):
@@ -240,10 +241,10 @@ class Falclient(PluginBase):
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], video_tmp_path)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
                     else:
-                        await bot.send_video_message(message["FromWxid"], video_tmp_path)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -293,10 +294,10 @@ class Falclient(PluginBase):
 
             # 发送本地视频文件
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], tmp_file_path)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], tmp_file_path)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
