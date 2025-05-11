@@ -291,21 +291,14 @@ class Falclient(PluginBase):
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     
-                    cover_image_file_path = None
-                    try:
-                        cover_image_file_path = self._generate_cover_image_file()
-                        if message.get("IsGroup"):
-                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_image_file_path))
-                            await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
-                        else:
-                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_image_file_path))
-                    finally:
-                        if cover_image_file_path and os.path.exists(cover_image_file_path):
-                            try:
-                                os.remove(cover_image_file_path)
-                                logger.info(f"临时封面已删除: {cover_image_file_path}")
-                            except Exception as e_rem:
-                                logger.warning(f"删除临时封面失败: {cover_image_file_path}, error: {e_rem}")
+                    fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png")
+                    logger.info(f"使用固定的封面: {fallback_cover_path}")
+
+                    if message.get("IsGroup"):
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=fallback_cover_path)
+                        await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                    else:
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=fallback_cover_path)
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -331,7 +324,6 @@ class Falclient(PluginBase):
             return
 
         tmp_file_path = self.get_tmp_video_path()
-        tmp_cover_path = None # Initialize tmp_cover_path
         try:
             # 下载视频到本地临时文件
             async with aiohttp.ClientSession() as session:
@@ -352,14 +344,15 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 生成JPEG封面文件
-            tmp_cover_path = self._generate_cover_image_file()
+            # 使用固定的 fallback.png作为封面
+            fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png")
+            logger.info(f"使用固定的封面: {fallback_cover_path}")
 
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(tmp_cover_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=fallback_cover_path)
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(tmp_cover_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=fallback_cover_path)
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
@@ -367,9 +360,10 @@ class Falclient(PluginBase):
             else:
                 await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
         finally:
-            if tmp_cover_path and os.path.exists(tmp_cover_path): # Cleanup for cover path
+            # 删除临时视频文件
+            if tmp_file_path and os.path.exists(tmp_file_path):
                 try:
-                    os.remove(tmp_cover_path)
-                    logger.info(f"临时封面已删除: {tmp_cover_path}")
+                    os.remove(tmp_file_path)
+                    logger.info(f"临时视频文件已删除: {tmp_file_path}")
                 except Exception as e_rem:
-                    logger.warning(f"删除临时封面失败: {tmp_cover_path}, error: {e_rem}")
+                    logger.warning(f"删除临时视频文件失败: {tmp_file_path}, error: {e_rem}")
