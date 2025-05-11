@@ -291,14 +291,15 @@ class Falclient(PluginBase):
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     
-                    fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png")
-                    logger.info(f"使用固定的封面: {fallback_cover_path}")
+                    # fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png") # No longer specifying path
+                    # logger.info(f"使用固定的封面: {fallback_cover_path}")
+                    logger.info("使用库默认封面 (image=None)")
 
                     if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=fallback_cover_path)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=None)
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
                     else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=fallback_cover_path)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=None)
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -344,15 +345,16 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 使用固定的 fallback.png作为封面
-            fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png")
-            logger.info(f"使用固定的封面: {fallback_cover_path}")
+            # 使用库默认封面 (image=None)
+            # fallback_cover_path = Path("dow/lib/wx849/WechatAPI/Client2/fallback.png") # No longer specifying path
+            # logger.info(f"使用固定的封面: {fallback_cover_path}")
+            logger.info("使用库默认封面 (image=None)")
 
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=fallback_cover_path)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=None)
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=fallback_cover_path)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=None)
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
