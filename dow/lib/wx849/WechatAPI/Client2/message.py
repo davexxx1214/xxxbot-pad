@@ -246,6 +246,8 @@ class MessageMixin(WechatAPIClientBase):
         predict_time = int(file_len / 1024 / 300)
         logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒", wxid, predict_time)
 
+        logger.info(f'使用的封面图片路径: {image}, 绝对路径: {os.path.abspath(image)}')
+
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": vid_base64, "ImageBase64": image_base64,
                           "PlayLength": duration}
