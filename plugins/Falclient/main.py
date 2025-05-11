@@ -206,6 +206,7 @@ class Falclient(PluginBase):
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
         import tempfile, os, aiohttp
+        logger.info(f"[img2video] bot.send_video_message 实际类型: {type(bot)}，方法: {getattr(bot, 'send_video_message', None)}")
         tmp_file_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
@@ -240,11 +241,18 @@ class Falclient(PluginBase):
                                     video_tmp_path = f.name
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
+                    cover_path = Path(os.path.join(os.path.dirname(__file__), 'cover.png'))
+                    if not cover_path.exists():
+                        png_base64 = (
+                            b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+                        )
+                        with open(cover_path, 'wb') as f:
+                            f.write(base64.b64decode(png_base64))
                     if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_path)
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
                     else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_path)
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -272,6 +280,7 @@ class Falclient(PluginBase):
 
     async def send_video_url(self, bot, message, video_url):
         # 直接发送视频文件，先下载到本地再发
+        logger.info(f"bot.send_video_message 实际类型: {type(bot)}，方法: {getattr(bot, 'send_video_message', None)}")
         if not video_url or not video_url.startswith("http"):
             # 不是有效链接，直接提示
             if message.get("IsGroup"):
@@ -292,12 +301,21 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 发送本地视频文件
+            # 显式传入一张小的 PNG 图片作为封面
+            cover_path = Path(os.path.join(os.path.dirname(__file__), 'cover.png'))
+            if not cover_path.exists():
+                # 如果没有，生成一个 1x1 像素透明 PNG
+                png_base64 = (
+                    b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+                )
+                with open(cover_path, 'wb') as f:
+                    f.write(base64.b64decode(png_base64))
+
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_path)
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_path)
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
