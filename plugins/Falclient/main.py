@@ -264,10 +264,19 @@ class Falclient(PluginBase):
                     async with aiohttp.ClientSession() as session:
                         async with session.get(video_url) as resp:
                             if resp.status == 200:
+                                content = await resp.read()
+                                logger.info(f"下载视频内容长度: {len(content)} 字节")
+                                if len(content) == 0:
+                                    logger.error(f"下载视频内容为空！url={video_url}")
+                                    if message.get("IsGroup"):
+                                        await bot.send_at_message(message["FromWxid"], f"视频生成失败：下载内容为空", [message["SenderWxid"]])
+                                    else:
+                                        await bot.send_text_message(message["FromWxid"], f"视频生成失败：下载内容为空")
+                                    return
                                 with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
-                                    f.write(await resp.read())
+                                    f.write(content)
                                     video_tmp_path = f.name
-                                logger.info(f"视频已下载到本地: {video_tmp_path}")
+                                logger.info(f"视频已下载到本地: {video_tmp_path}, 大小: {os.path.getsize(video_tmp_path)} 字节")
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     cover_data = self.gen_jpeg_cover_base64()
@@ -318,10 +327,19 @@ class Falclient(PluginBase):
             async with aiohttp.ClientSession() as session:
                 async with session.get(video_url) as resp:
                     if resp.status == 200:
+                        content = await resp.read()
+                        logger.info(f"下载视频内容长度: {len(content)} 字节")
+                        if len(content) == 0:
+                            logger.error(f"下载视频内容为空！url={video_url}")
+                            if message.get("IsGroup"):
+                                await bot.send_at_message(message["FromWxid"], f"视频生成失败：下载内容为空", [message["SenderWxid"]])
+                            else:
+                                await bot.send_text_message(message["FromWxid"], f"视频生成失败：下载内容为空")
+                            return
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
-                            f.write(await resp.read())
+                            f.write(content)
                             tmp_file_path = f.name
-                        logger.info(f"视频已下载到本地: {tmp_file_path}")
+                        logger.info(f"视频已下载到本地: {tmp_file_path}, 大小: {os.path.getsize(tmp_file_path)} 字节")
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
