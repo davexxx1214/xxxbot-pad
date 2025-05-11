@@ -203,6 +203,15 @@ class Falclient(PluginBase):
             logger.error(f"Falclient: 文生视频API调用异常: {e}\n{traceback.format_exc()}")
             await self.send_video_url(bot, message, f"API调用异常: {e}")
 
+    def gen_cover_base64(self):
+        # 生成320x180的白色PNG图片
+        img = Image.new('RGB', (320, 180), color=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode()
+        return "data:image/png;base64," + b64
+
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
         import tempfile, os, aiohttp
@@ -241,16 +250,7 @@ class Falclient(PluginBase):
                                     video_tmp_path = f.name
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
-                    cover_path = Path(os.path.join(os.path.dirname(__file__), 'cover.png'))
-                    if not cover_path.exists():
-                        png_base64 = (
-                            b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
-                        )
-                        with open(cover_path, 'wb') as f:
-                            f.write(base64.b64decode(png_base64))
-                    with open(cover_path, 'rb') as f:
-                        cover_base64 = base64.b64encode(f.read()).decode()
-                    cover_data = "data:image/jpeg;base64," + cover_base64
+                    cover_data = self.gen_cover_base64()
                     if message.get("IsGroup"):
                         await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
@@ -304,20 +304,8 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 显式传入一张小的 PNG 图片作为封面
-            cover_path = Path(os.path.join(os.path.dirname(__file__), 'cover.png'))
-            if not cover_path.exists():
-                # 如果没有，生成一个 1x1 像素透明 PNG
-                png_base64 = (
-                    b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
-                )
-                with open(cover_path, 'wb') as f:
-                    f.write(base64.b64decode(png_base64))
-
-            # 读取封面并拼接jpeg前缀
-            with open(cover_path, 'rb') as f:
-                cover_base64 = base64.b64encode(f.read()).decode()
-            cover_data = "data:image/jpeg;base64," + cover_base64
+            # 生成标准PNG封面
+            cover_data = self.gen_cover_base64()
 
             if message.get("IsGroup"):
                 await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
