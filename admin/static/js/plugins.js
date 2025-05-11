@@ -1620,8 +1620,6 @@ function renderMarketPlugins(marketPluginsList) {
             max-height: 3em;
         }
         #market-list .plugin-icon {
-            width: 45px;
-            height: 45px;
             display: flex;
             align-items: center;
             justify-content: center;
