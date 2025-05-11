@@ -217,7 +217,7 @@ class Falclient(PluginBase):
     def _generate_cover_image_file(self) -> str:
         tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
         os.makedirs(tmp_dir, exist_ok=True)
-        cover_filename = f"cover_{uuid.uuid4().hex}.jpg"
+        cover_filename = f"cover_{uuid.uuid4().hex}.png"
         cover_path = os.path.join(tmp_dir, cover_filename)
 
         img = Image.new('RGB', (320, 180), color=(255, 255, 255))
@@ -232,7 +232,7 @@ class Falclient(PluginBase):
             font = None # Use default font if arial.ttf is not found
         draw.text((10, 70), "视频封面", fill=(0,0,0), font=font) # Adjusted y-position for text
         
-        img.save(cover_path, format='JPEG')
+        img.save(cover_path, format='PNG')
         logger.info(f"临时封面已生成: {cover_path}")
         return cover_path
 
