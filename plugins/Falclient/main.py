@@ -252,10 +252,10 @@ class Falclient(PluginBase):
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     cover_data = self.gen_cover_base64()
                     if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
                     else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -308,10 +308,10 @@ class Falclient(PluginBase):
             cover_data = self.gen_cover_base64()
 
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
