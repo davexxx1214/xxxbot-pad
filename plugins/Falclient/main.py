@@ -9,13 +9,14 @@ from loguru import logger
 import os
 from utils.plugin_base import PluginBase
 import traceback
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
 import regex  # 不是re，是regex库，支持\p{Zs}
 import tempfile
 import fal_client
 from pathlib import Path
+import random
 
 
 class Falclient(PluginBase):
@@ -212,6 +213,24 @@ class Falclient(PluginBase):
         b64 = base64.b64encode(buf.read()).decode()
         return "data:image/png;base64," + b64
 
+    def gen_jpeg_cover_base64(self):
+        img = Image.new('RGB', (320, 180), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        for _ in range(5):
+            x1, y1 = random.randint(0, 320), random.randint(0, 180)
+            x2, y2 = random.randint(0, 320), random.randint(0, 180)
+            draw.line((x1, y1, x2, y2), fill=(random.randint(0,255),random.randint(0,255),random.randint(0,255)), width=3)
+        try:
+            font = ImageFont.truetype("arial.ttf", 24)
+        except:
+            font = None
+        draw.text((10, 80), "视频封面", fill=(0,0,0), font=font)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG')
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode()
+        return "data:image/jpeg;base64," + b64
+
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
         import tempfile, os, aiohttp
@@ -248,14 +267,15 @@ class Falclient(PluginBase):
                                 with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
                                     f.write(await resp.read())
                                     video_tmp_path = f.name
+                                logger.info(f"视频已下载到本地: {video_tmp_path}")
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
-                    cover_data = self.gen_cover_base64()
+                    cover_data = self.gen_jpeg_cover_base64()
                     if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
                     else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -301,17 +321,18 @@ class Falclient(PluginBase):
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
                             f.write(await resp.read())
                             tmp_file_path = f.name
+                        logger.info(f"视频已下载到本地: {tmp_file_path}")
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 生成标准PNG封面
-            cover_data = self.gen_cover_base64()
+            # 生成JPEG封面
+            cover_data = self.gen_jpeg_cover_base64()
 
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
