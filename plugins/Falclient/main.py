@@ -241,8 +241,9 @@ class Falclient(PluginBase):
                 pass
 
     async def send_video_url(self, bot, message, video_url):
-        # 直接发送视频URL
+        # 直接发送视频文件
         if message.get("IsGroup"):
-            await bot.send_at_message(message["FromWxid"], f"[VIDEO_URL]{video_url}", [message["SenderWxid"]])
+            await bot.send_video_message(message["FromWxid"], video_url)
+            await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
         else:
-            await bot.send_text_message(message["FromWxid"], f"[VIDEO_URL]{video_url}")
+            await bot.send_video_message(message["FromWxid"], video_url)
