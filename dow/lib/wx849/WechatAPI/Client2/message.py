@@ -241,6 +241,13 @@ class MessageMixin(WechatAPIClientBase):
             raise ValueError("video should be str, bytes, or path")
         duration = media_info.tracks[0].duration
 
+        # Ensure vid_base64 (video content) has the data URI prefix
+        if not vid_base64.startswith("data:video/mp4;base64,"):
+            logger.debug(f"[MessageMixin] Video base64 (len: {len(vid_base64)}) does not have data URI. Adding 'data:video/mp4;base64,'")
+            vid_base64 = "data:video/mp4;base64," + vid_base64
+        else:
+            logger.debug(f"[MessageMixin] Video base64 (len: {len(vid_base64)}) already has data URI.")
+
         # get image base64
         if isinstance(image, str):
             image_base64 = image
