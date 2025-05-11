@@ -298,24 +298,24 @@ class Falclient(PluginBase):
                         await bot.send_at_message(message["FromWxid"], f"视频生成失败：{video_url}", [message["SenderWxid"]])
                     else:
                         await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
-                finally:
-                    if video_tmp_path and os.path.exists(video_tmp_path):
-                        try:
-                            os.remove(video_tmp_path)
-                        except Exception:
-                            pass
+                # finally:
+                #     if video_tmp_path and os.path.exists(video_tmp_path):
+                #         try:
+                #             os.remove(video_tmp_path)
+                #         except Exception:
+                #             pass
             elif video_url:
                 await self.send_video_url(bot, message, video_url)
             else:
                 await self.send_video_url(bot, message, "未获取到视频URL")
         except Exception as e:
             await self.send_video_url(bot, message, f"API调用异常: {e}")
-        finally:
-            try:
-                if tmp_file_path:
-                    os.remove(tmp_file_path)
-            except Exception:
-                pass
+        # finally:
+        #     try:
+        #         if tmp_file_path:
+        #             os.remove(tmp_file_path)
+        #     except Exception:
+        #         pass
 
     async def send_video_url(self, bot, message, video_url):
         # 直接发送视频文件，先下载到本地再发
@@ -363,10 +363,10 @@ class Falclient(PluginBase):
                 await bot.send_at_message(message["FromWxid"], f"视频生成失败：{video_url}", [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
-        finally:
-            # 删除临时文件
-            if tmp_file_path and os.path.exists(tmp_file_path):
-                try:
-                    os.remove(tmp_file_path)
-                except Exception:
-                    pass
+        # finally:
+        #     # 删除临时文件
+        #     if tmp_file_path and os.path.exists(tmp_file_path):
+        #         try:
+        #             os.remove(tmp_file_path)
+        #         except Exception:
+        #             pass
