@@ -287,6 +287,9 @@ class Falclient(PluginBase):
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     cover_data = self.gen_jpeg_cover_base64()
+                    if cover_data.startswith("data:image/jpeg;base64,"):
+                        cover_data = cover_data.split(",", 1)[1]
+
                     if message.get("IsGroup"):
                         await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
                         await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
@@ -351,6 +354,8 @@ class Falclient(PluginBase):
 
             # 生成JPEG封面
             cover_data = self.gen_jpeg_cover_base64()
+            if cover_data.startswith("data:image/jpeg;base64,"):
+                cover_data = cover_data.split(",", 1)[1]
 
             if message.get("IsGroup"):
                 await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
