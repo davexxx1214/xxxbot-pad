@@ -71,12 +71,7 @@ class Falclient(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-            # 新增：先回复收到请求
-            notice = "你的图生视频的请求已经收到，请稍候..."
-            if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
-            else:
-                await bot.send_text_message(message["FromWxid"], notice)
+
             return False
         # 文生视频
         if content.startswith(self.fal_text_prefix):
@@ -182,7 +177,6 @@ class Falclient(PluginBase):
         return False
 
     async def handle_text2video(self, bot, message, prompt):
-        # 文生视频API调用
         try:
             url = f"https://fal.run/fal-ai/{self.fal_kling_text_model}"
             headers = {
@@ -190,8 +184,10 @@ class Falclient(PluginBase):
                 "Content-Type": "application/json"
             }
             data = {"prompt": prompt}
+            logger.info(f"Falclient: 文生视频API请求 url={url} headers={headers} data={data}")
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=data) as resp:
+                    logger.info(f"Falclient: 文生视频API响应状态: {resp.status}")
                     if resp.status == 200:
                         result = await resp.json()
                         video_url = result.get("video", {}).get("url")
@@ -202,42 +198,39 @@ class Falclient(PluginBase):
                     else:
                         await self.send_video_url(bot, message, f"API请求失败: {resp.status}")
         except Exception as e:
+            import traceback
+            logger.error(f"Falclient: 文生视频API调用异常: {e}\n{traceback.format_exc()}")
             await self.send_video_url(bot, message, f"API调用异常: {e}")
 
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
+        import tempfile, os
         tmp_file_path = None
         try:
-            # 1. 保存图片为临时文件
             with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
                 tmp_file.write(image_bytes)
                 tmp_file_path = tmp_file.name
 
-            # 2. 上传图片获取URL
             client = fal_client.SyncClient(key=self.fal_api_key)
             image_url = client.upload_file(tmp_file_path)
             if not image_url:
                 await self.send_video_url(bot, message, "图片上传失败")
                 return
 
-            # 3. 调用生成视频API
-            api_url = f"https://fal.run/fal-ai/{self.fal_kling_img_model}"
-            headers = {
-                "Authorization": f"Key {self.fal_api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {"prompt": prompt, "image_url": image_url}
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, headers=headers, json=payload) as resp2:
-                    if resp2.status == 200:
-                        result = await resp2.json()
-                        video_url = result.get("video", {}).get("url")
-                        if video_url:
-                            await self.send_video_url(bot, message, video_url)
-                        else:
-                            await self.send_video_url(bot, message, "未获取到视频URL")
-                    else:
-                        await self.send_video_url(bot, message, f"API请求失败: {resp2.status}")
+            # 用SDK的subscribe方法调用
+            result = client.subscribe(
+                f"fal-ai/{self.fal_kling_img_model}",
+                arguments={
+                    "prompt": prompt,
+                    "image_url": image_url
+                },
+                with_logs=False
+            )
+            video_url = result.get("video", {}).get("url")
+            if video_url:
+                await self.send_video_url(bot, message, video_url)
+            else:
+                await self.send_video_url(bot, message, "未获取到视频URL")
         except Exception as e:
             await self.send_video_url(bot, message, f"API调用异常: {e}")
         finally:
