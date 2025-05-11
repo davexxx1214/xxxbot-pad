@@ -214,7 +214,12 @@ class Falclient(PluginBase):
         b64 = base64.b64encode(buf.read()).decode()
         return "data:image/png;base64," + b64
 
-    def gen_jpeg_cover_base64(self):
+    def _generate_cover_image_file(self) -> str:
+        tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        cover_filename = f"cover_{uuid.uuid4().hex}.jpg"
+        cover_path = os.path.join(tmp_dir, cover_filename)
+
         img = Image.new('RGB', (320, 180), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         for _ in range(5):
@@ -223,14 +228,13 @@ class Falclient(PluginBase):
             draw.line((x1, y1, x2, y2), fill=(random.randint(0,255),random.randint(0,255),random.randint(0,255)), width=3)
         try:
             font = ImageFont.truetype("arial.ttf", 24)
-        except:
-            font = None
-        draw.text((10, 80), "视频封面", fill=(0,0,0), font=font)
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG')
-        buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode()
-        return "data:image/jpeg;base64," + b64
+        except IOError: # More specific exception
+            font = None # Use default font if arial.ttf is not found
+        draw.text((10, 70), "视频封面", fill=(0,0,0), font=font) # Adjusted y-position for text
+        
+        img.save(cover_path, format='JPEG')
+        logger.info(f"临时封面已生成: {cover_path}")
+        return cover_path
 
     def get_tmp_video_path(self):
         # 确保 plugins/Falclient/tmp 目录存在
@@ -286,39 +290,34 @@ class Falclient(PluginBase):
                                 logger.info(f"视频已下载到本地: {video_tmp_path}, 大小: {os.path.getsize(video_tmp_path)} 字节")
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
-                    cover_data = self.gen_jpeg_cover_base64()
-                    if cover_data.startswith("data:image/jpeg;base64,"):
-                        cover_data = cover_data.split(",", 1)[1]
-
-                    if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
-                        await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
-                    else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=cover_data)
+                    
+                    cover_image_file_path = None
+                    try:
+                        cover_image_file_path = self._generate_cover_image_file()
+                        if message.get("IsGroup"):
+                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_image_file_path))
+                            await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                        else:
+                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_image_file_path))
+                    finally:
+                        if cover_image_file_path and os.path.exists(cover_image_file_path):
+                            try:
+                                os.remove(cover_image_file_path)
+                                logger.info(f"临时封面已删除: {cover_image_file_path}")
+                            except Exception as e_rem:
+                                logger.warning(f"删除临时封面失败: {cover_image_file_path}, error: {e_rem}")
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
                         await bot.send_at_message(message["FromWxid"], f"视频生成失败：{video_url}", [message["SenderWxid"]])
                     else:
                         await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
-                # finally:
-                #     if video_tmp_path and os.path.exists(video_tmp_path):
-                #         try:
-                #             os.remove(video_tmp_path)
-                #         except Exception:
-                #             pass
             elif video_url:
                 await self.send_video_url(bot, message, video_url)
             else:
                 await self.send_video_url(bot, message, "未获取到视频URL")
         except Exception as e:
             await self.send_video_url(bot, message, f"API调用异常: {e}")
-        # finally:
-        #     try:
-        #         if tmp_file_path:
-        #             os.remove(tmp_file_path)
-        #     except Exception:
-        #         pass
 
     async def send_video_url(self, bot, message, video_url):
         # 直接发送视频文件，先下载到本地再发
@@ -332,6 +331,7 @@ class Falclient(PluginBase):
             return
 
         tmp_file_path = self.get_tmp_video_path()
+        tmp_cover_path = None # Initialize tmp_cover_path
         try:
             # 下载视频到本地临时文件
             async with aiohttp.ClientSession() as session:
@@ -352,26 +352,24 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 生成JPEG封面
-            cover_data = self.gen_jpeg_cover_base64()
-            if cover_data.startswith("data:image/jpeg;base64,"):
-                cover_data = cover_data.split(",", 1)[1]
+            # 生成JPEG封面文件
+            tmp_cover_path = self._generate_cover_image_file()
 
             if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(tmp_cover_path))
                 await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
             else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=cover_data)
+                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(tmp_cover_path))
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
                 await bot.send_at_message(message["FromWxid"], f"视频生成失败：{video_url}", [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
-        # finally:
-        #     # 删除临时文件
-        #     if tmp_file_path and os.path.exists(tmp_file_path):
-        #         try:
-        #             os.remove(tmp_file_path)
-        #         except Exception:
-        #             pass
+        finally:
+            if tmp_cover_path and os.path.exists(tmp_cover_path): # Cleanup for cover path
+                try:
+                    os.remove(tmp_cover_path)
+                    logger.info(f"临时封面已删除: {tmp_cover_path}")
+                except Exception as e_rem:
+                    logger.warning(f"删除临时封面失败: {tmp_cover_path}, error: {e_rem}")
