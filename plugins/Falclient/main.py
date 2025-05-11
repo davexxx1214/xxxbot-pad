@@ -17,6 +17,7 @@ import tempfile
 import fal_client
 from pathlib import Path
 import random
+import uuid
 
 
 class Falclient(PluginBase):
@@ -231,6 +232,13 @@ class Falclient(PluginBase):
         b64 = base64.b64encode(buf.read()).decode()
         return "data:image/jpeg;base64," + b64
 
+    def get_tmp_video_path(self):
+        # 确保 plugins/Falclient/tmp 目录存在
+        tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        filename = f"video_{uuid.uuid4().hex}.mp4"
+        return os.path.join(tmp_dir, filename)
+
     async def handle_img2video(self, bot, message, image_bytes, prompt):
         # 图生视频API调用
         import tempfile, os, aiohttp
@@ -259,7 +267,7 @@ class Falclient(PluginBase):
             video_url = result.get("video", {}).get("url")
             if video_url and video_url.startswith("http"):
                 # 先下载到本地再发
-                video_tmp_path = None
+                video_tmp_path = self.get_tmp_video_path()
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(video_url) as resp:
@@ -273,9 +281,8 @@ class Falclient(PluginBase):
                                     else:
                                         await bot.send_text_message(message["FromWxid"], f"视频生成失败：下载内容为空")
                                     return
-                                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
+                                with open(video_tmp_path, 'wb') as f:
                                     f.write(content)
-                                    video_tmp_path = f.name
                                 logger.info(f"视频已下载到本地: {video_tmp_path}, 大小: {os.path.getsize(video_tmp_path)} 字节")
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
@@ -321,7 +328,7 @@ class Falclient(PluginBase):
                 await bot.send_text_message(message["FromWxid"], f"视频生成失败：{video_url}")
             return
 
-        tmp_file_path = None
+        tmp_file_path = self.get_tmp_video_path()
         try:
             # 下载视频到本地临时文件
             async with aiohttp.ClientSession() as session:
@@ -336,9 +343,8 @@ class Falclient(PluginBase):
                             else:
                                 await bot.send_text_message(message["FromWxid"], f"视频生成失败：下载内容为空")
                             return
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as f:
+                        with open(tmp_file_path, 'wb') as f:
                             f.write(content)
-                            tmp_file_path = f.name
                         logger.info(f"视频已下载到本地: {tmp_file_path}, 大小: {os.path.getsize(tmp_file_path)} 字节")
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
