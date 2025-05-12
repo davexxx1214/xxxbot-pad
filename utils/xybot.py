@@ -1170,9 +1170,25 @@ class XYBot:
         # 检查消息是否包含Ats字段，并且机器人的wxid在Ats列表中
         if "Ats" in message and self.wxid in message["Ats"]:
             # 尝试从消息内容中移除@部分
-            # 常见的机器人名称列表
-            robot_names = ["小小x", "小x", "机器人"]
-            if self.nickname:
+            # 从main_config.toml中读取机器人名称列表
+            robot_names = []
+            try:
+                # 读取main_config.toml中的配置
+                import tomllib
+                with open("main_config.toml", "rb") as f:
+                    main_config = tomllib.load(f)
+                    robot_names = main_config.get("XYBot", {}).get("robot-names", [])
+                    logger.debug(f"从main_config.toml中读取到机器人名称列表: {robot_names}")
+            except Exception as e:
+                logger.error(f"读取main_config.toml中的机器人名称失败: {e}")
+
+            # 如果配置文件中没有设置或读取失败，使用默认值
+            if not robot_names:
+                robot_names = ["小小x", "小x", "机器人"]
+                logger.debug(f"使用默认机器人名称列表: {robot_names}")
+
+            # 添加机器人自己的昵称
+            if self.nickname and self.nickname not in robot_names:
                 robot_names.append(self.nickname)
 
             # 尝试从群成员列表中获取机器人的群昵称

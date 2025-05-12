@@ -27,11 +27,20 @@ debug = true               # 是否开启调试模式
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
 ignore-protection = true             # 是否忽略风控保护机制，建议保持false
+<<<<<<< HEAD
 
 # 群聊唤醒词设置
 enable-group-wakeup = true           # 是否启用群聊唤醒词功能
 group-wakeup-words = ["@扁小鹊"]  # 群聊唤醒词列表，消息需以这些词开头才会触发处理
 
+
+robot-names = [
+    "扁小鹊"
+]
+# 机器人wxid列表，用于检测at_list中的@机器人
+robot-wxids = [
+    "扁小鹊"
+]
 # GitHub加速服务设置
 # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
 # 空字符串表示直连不使用加速
@@ -138,7 +147,7 @@ restartContent = "系统已于 <span style=\"color:#1e90ff;font-weight:bold;\">{
 # 消息回调设置
 [Callback]
 enabled = true                      # 是否启用回调功能
-path = "python3 wx849_log_callback.py"  # 回调脚本路径，根据Python安装位置可能需要调整
+path = "python wx849_callback_sender.py"  # 回调脚本路径，根据Python安装位置可能需要调整
 delay = 0                           # 回调延迟（毫秒），通常设为0
 mode = "all"                        # 回调模式：all=所有消息，filter=仅指定类型
 
