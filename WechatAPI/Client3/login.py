@@ -57,7 +57,7 @@ class LoginMixin(WechatAPIClientBase):
                 protocol_version = "ipad"  # 默认版本
 
             if protocol_version == "Mac":
-                qr_api_path = "/Login/GetQRMac"  # Mac版本使用的路径
+                qr_api_path = "/api/Login/GetQRMac"  # Mac版本使用的路径
             else:
                 qr_api_path = "/api/Login/GetQRx"  # 其他版本使用的默认路径
 

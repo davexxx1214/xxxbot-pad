@@ -32,6 +32,14 @@ group-wakeup-words = [
     "bot",
     "机器人",
 ]
+# 机器人名称列表，用于识别@机器人的消息
+robot-names = [
+    "小小x"
+]
+# 机器人wxid列表，用于检测at_list中的@机器人
+robot-wxids = [
+    "wxid_xxxx"
+]
 # GitHub加速服务设置
 # 可选值: "", "https://ghfast.top/", "https://gh-proxy.com/", "https://mirror.ghproxy.com/"
 # 空字符串表示直连不使用加速
