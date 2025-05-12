@@ -179,16 +179,6 @@ class MessageMixin(WechatAPIClientBase):
         else:
             raise ValueError("Argument 'image' can only be str, bytes, or os.PathLike")
 
-        # Ensure the image_base64 string has a data URI prefix
-        if not image.startswith("data:image"):
-            logger.debug("Image base64 does not have a data URI prefix. Adding 'data:image/jpeg;base64,'")
-            image = "data:image/jpeg;base64," + image
-        elif image.startswith("data:image/png;base64,"): # Correctly handle if it was already PNG
-            logger.debug("Image base64 already has PNG data URI prefix.")
-        elif image.startswith("data:image/jpeg;base64,"):
-             logger.debug("Image base64 already has JPEG data URI prefix.")
-        # else: if it's some other data:image/xxx;base64, leave it as is.
-
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": image}
             response = await session.post(f'http://{self.ip}:{self.port}/api/Msg/UploadImg', json=json_param)
@@ -241,13 +231,6 @@ class MessageMixin(WechatAPIClientBase):
             raise ValueError("video should be str, bytes, or path")
         duration = media_info.tracks[0].duration
 
-        # Ensure vid_base64 (video content) has the data URI prefix
-        if not vid_base64.startswith("data:video/mp4;base64,"):
-            logger.debug(f"[MessageMixin] Video base64 (len: {len(vid_base64)}) does not have data URI. Adding 'data:video/mp4;base64,'")
-            vid_base64 = "data:video/mp4;base64," + vid_base64
-        else:
-            logger.debug(f"[MessageMixin] Video base64 (len: {len(vid_base64)}) already has data URI.")
-
         # get image base64
         if isinstance(image, str):
             image_base64 = image
@@ -259,27 +242,9 @@ class MessageMixin(WechatAPIClientBase):
         else:
             raise ValueError("image should be str, bytes, or path")
 
-        # Ensure the image_base64 string for the cover has a data URI prefix
-        if not image_base64: # If image_base64 is empty or None after processing (e.g. fallback.png failed)
-            logger.warning("[MessageMixin] Cover image_base64 is empty. Using 1x1 transparent PNG as fallback.")
-            image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-            # Now the following block will add the jpeg prefix to this 1x1 png
-
-        if image_base64: # Only proceed if image_base64 is not empty or None (it should be the 1x1 png if it was empty before)
-            if not image_base64.startswith("data:image"):
-                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) does not have a data URI prefix. Adding 'data:image/jpeg;base64,'")
-                image_base64 = "data:image/jpeg;base64," + image_base64
-            elif image_base64.startswith("data:image/png;base64,"):
-                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has PNG data URI prefix.")
-            elif image_base64.startswith("data:image/jpeg;base64,"):
-                logger.debug(f"[MessageMixin] Cover image base64 (len: {len(image_base64)}) already has JPEG data URI prefix.")
-        # No explicit else here, as image_base64 should now always be populated if it reached this point from an empty state.
-
         # 打印预估时间，300KB/s
         predict_time = int(file_len / 1024 / 300)
         logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒", wxid, predict_time)
-
-        logger.info(f'使用的封面图片路径: {image}, 绝对路径: {os.path.abspath(image)}')
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": vid_base64, "ImageBase64": image_base64,
