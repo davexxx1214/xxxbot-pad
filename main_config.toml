@@ -27,7 +27,6 @@ debug = true               # 是否开启调试模式
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
 ignore-protection = true             # 是否忽略风控保护机制，建议保持false
-<<<<<<< HEAD
 
 # 群聊唤醒词设置
 enable-group-wakeup = true           # 是否启用群聊唤醒词功能
