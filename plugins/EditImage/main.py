@@ -469,7 +469,9 @@ class EditImage(PluginBase):
                 for part_idx, part in enumerate(response.candidates[0].content.parts):
                     logger.info(f"[EditImage] Gemini: Processing part {part_idx + 1} of {len(response.candidates[0].content.parts)}.")
                     if hasattr(part, 'text') and part.text:
-                        logger.info(f"[EditImage] Gemini: Part {part_idx + 1} is a text part: '{part.text[:200].replace('\n', ' ')}...'" )
+                        # Corrected f-string: pre-format the text part
+                        log_text_part = part.text[:200].replace('\n', ' ')
+                        logger.info(f"[EditImage] Gemini: Part {part_idx + 1} is a text part: '{log_text_part}...'")
                         text_parts_content.append(part.text)
                     
                     if hasattr(part, 'inline_data') and part.inline_data and hasattr(part.inline_data, 'data') and part.inline_data.data:
