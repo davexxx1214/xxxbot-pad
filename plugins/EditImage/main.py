@@ -405,28 +405,11 @@ class EditImage(PluginBase):
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ]
 
-            generation_config = None
-            try:
-                # Try to use genai.GenerationConfig directly
-                generation_config = genai.GenerationConfig(
-                    response_modalities=["TEXT", "IMAGE"] # Using uppercase strings, hoping this constructor handles them
-                )
-                logger.info("[EditImage] Successfully created genai.GenerationConfig.")
-            except AttributeError:
-                logger.warning("[EditImage] genai.GenerationConfig not found. The API structure might be different.")
-                # Fallback to a dictionary if the class isn't found - this led to errors before but kept as a known path
-                generation_config = {
-                     "response_modalities": ["TEXT", "IMAGE"]
-                }
-            except Exception as e:
-                logger.error(f"[EditImage] Error creating GenerationConfig: {e}. Proceeding with dictionary or None.")
-                # Fallback to dictionary if other errors occur during typed object creation
-                generation_config = {
-                     "response_modalities": ["TEXT", "IMAGE"]
-                }
-
-
-            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}. Using generation_config: {generation_config}")
+            # Directly use the proven dictionary format for generation_config
+            generation_config = {
+                "response_modalities": ["TEXT", "IMAGE"]
+            }
+            logger.info(f"[EditImage] Using direct dictionary for generation_config: {generation_config}")
 
             response = await asyncio.to_thread(
                 self.gemini_client.generate_content,
@@ -481,30 +464,46 @@ class EditImage(PluginBase):
                         logger.info(f"[EditImage] Gemini: Part {part_idx + 1} is image data. Successfully received.")
                         # If we find an image, we might not need to report text parts unless for debugging.
                         # For now, let's prioritize image.
-                        break 
+                        # User wants text part sent first if available, so we don't break here if text also exists.
+                        # However, if an image part is found, we store its bytes and continue to ensure all text parts are collected.
+                        # We will send text first, then image.
                     else:
                         logger.info(f"[EditImage] Gemini: Part {part_idx + 1} does not contain image data.")
             
+            # --- New Response Sending Logic ---
+            sent_something = False
+
+            # 1. Send collected text parts, if any
+            if text_parts_content:
+                full_text_response = "\n".join(text_parts_content).strip() # Join with newlines for readability
+                logger.info(f"[EditImage] Gemini: Sending a_text_response_to_user: {full_text_response[:200]}...")
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], full_text_response, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], full_text_response)
+                sent_something = True
+
+            # 2. Send image, if any
             if edited_image_bytes:
+                logger.info("[EditImage] Gemini: Sending image_to_user.")
                 if message["IsGroup"]:
                     await bot.send_image_message(message["FromWxid"], edited_image_bytes)
-                    await bot.send_at_message(message["FromWxid"], "🖼️ 您的图片已由Gemini修图完成！", [message["SenderWxid"]])
                 else:
                     await bot.send_image_message(message["FromWxid"], edited_image_bytes)
-                    await bot.send_text_message(message["FromWxid"], "🖼️ 您的图片已由Gemini修图完成！")
-            else:
-                full_text_response = " ".join(text_parts_content).strip()
-                if full_text_response:
-                    logger.error(f"[EditImage] Gemini: No image data found. Received text part(s) instead: {full_text_response[:500]}...")
-                    error_message = f"Gemini修图未能返回图片，API返回了文本信息：'{full_text_response[:100]}...' 请检查提示或图片内容。"
-                else:
-                    logger.error("[EditImage] Gemini: No image data found and no text parts identified in the response.")
-                    error_message = "Gemini修图失败，API没有返回有效的图片数据或文本说明。"
-                
+                sent_something = True
+            
+            # 3. Handle cases where nothing was sent (e.g., API error before part processing, or empty parts)
+            if not sent_something:
+                # This path should ideally be covered by earlier error checks (no parts, safety blocks, etc.)
+                # But as a fallback if no text or image was suitable to send from parts.
+                logger.error("[EditImage] Gemini: No suitable text or image data found in response parts to send to user.")
+                error_message = "Gemini修图失败，API没有返回可识别的内容。"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], error_message)
+            
+            # Removed the generic success message: "🖼️ 您的图片已由Gemini修图完成！"
 
         except Exception as e:
             logger.error(f"[EditImage] Gemini inpaint service exception: {e}")
