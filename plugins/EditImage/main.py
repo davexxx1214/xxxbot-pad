@@ -15,8 +15,8 @@ from utils.decorators import on_text_message, on_at_message, on_quote_message, o
 import regex  # 不是re，是regex库，支持\\p{Zs}
 import asyncio # 新增
 import google.generativeai as genai # 新增
-# Attempt to import from a submodule 'safety' within types
-from google.generativeai.types.safety import SafetySetting, HarmCategory, HarmBlockThreshold
+# Revert to importing the types module and aliasing it
+from google.generativeai import types as genai_types
 
 
 class EditImage(PluginBase):
@@ -393,34 +393,39 @@ class EditImage(PluginBase):
         try:
             pil_image = Image.open(io.BytesIO(image_bytes))
             
-            # Gemini API 安全设置 (使用直接导入的类型)
+            # Revert safety_settings to a list of dictionaries
             safety_settings = [
-                SafetySetting(
-                    category=HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=HarmBlockThreshold.BLOCK_NONE
-                ),
-                SafetySetting(
-                    category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=HarmBlockThreshold.BLOCK_NONE
-                ),
-                SafetySetting(
-                    category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=HarmBlockThreshold.BLOCK_NONE
-                ),
-                SafetySetting(
-                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=HarmBlockThreshold.BLOCK_NONE
-                ),
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ]
+
+            # Attempt to add generation_config
+            generation_config = None
+            try:
+                # Try to use the typed object if available in this version
+                generation_config = genai_types.GenerationConfig(
+                    response_modalities=[genai_types.GenerateContentResponseMimeType.IMAGE] # Assuming enum structure
+                )
+                logger.info("[EditImage] Using genai_types.GenerationConfig for response modality.")
+            except AttributeError:
+                logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
+                # Fallback to dictionary if typed object is not available or causes error
+                generation_config = {
+                    "response_modalities": ["IMAGE"] # Using plain string, hoping API understands
+                }
+            except Exception as e:
+                logger.error(f"[EditImage] Error preparing generation_config: {e}. Proceeding without explicit generation_config.")
 
             logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}")
 
-            # 使用 asyncio.to_thread 执行阻塞的API调用
+            # Use asyncio.to_thread 执行阻塞的API调用
             response = await asyncio.to_thread(
                 self.gemini_client.generate_content,
                 contents=[prompt, pil_image],
-                # generation_config: 似乎不需要显式设置response_modalities，模型会自动处理
                 safety_settings=safety_settings,
+                generation_config=generation_config # Add generation_config
             )
             
             # 处理响应 (参考 stability.py)
