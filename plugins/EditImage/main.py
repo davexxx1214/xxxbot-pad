@@ -15,7 +15,8 @@ from utils.decorators import on_text_message, on_at_message, on_quote_message, o
 import regex  # 不是re，是regex库，支持\\p{Zs}
 import asyncio # 新增
 import google.generativeai as genai # 新增
-from google.generativeai.types import SafetySetting, HarmCategory, HarmBlockThreshold
+# Attempt to import from a submodule 'safety' within types
+from google.generativeai.types.safety import SafetySetting, HarmCategory, HarmBlockThreshold
 
 
 class EditImage(PluginBase):
