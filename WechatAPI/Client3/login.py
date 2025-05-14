@@ -59,7 +59,7 @@ class LoginMixin(WechatAPIClientBase):
             if protocol_version == "Mac":
                 qr_api_path = "/api/Login/GetQRMac"  # Mac版本使用的路径
             else:
-                qr_api_path = "/api/Login/GetQRx"  # 其他版本使用的默认路径
+                qr_api_path = "/api/Login/GetQR"  # 其他版本使用的默认路径
 
             response = await session.post(f'http://{self.ip}:{self.port}{qr_api_path}', json=json_param)
             json_resp = await response.json()

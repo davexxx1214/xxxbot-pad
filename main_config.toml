@@ -22,6 +22,7 @@ port = 9090                # 管理后台端口，修改为9090
 username = "admin"         # 管理后台登录用户名
 password = "admin1234"      # 管理后台登录密码
 debug = true               # 是否开启调试模式
+log_level = "INFO"         # 日志级别，可选值: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
 
 # XYBot 核心设置
 [XYBot]

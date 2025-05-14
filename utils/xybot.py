@@ -623,85 +623,27 @@ class XYBot:
             is_group=message["IsGroup"]
         )
 
-        aeskey, cdnmidimgurl, length, md5 = None, None, None, None
+        # 解析图片信息，将图片元数据保存在消息对象中供插件使用
         try:
             root = ET.fromstring(message["Content"])
             img_element = root.find('img')
             if img_element is not None:
-                aeskey = img_element.get('aeskey')
-                cdnmidimgurl = img_element.get('cdnmidimgurl')
-                length = img_element.get('length')
-                md5 = img_element.get('md5')
-                logger.debug(f"解析图片XML成功: aeskey={aeskey}, length={length}, md5={md5}")
+                # 提取图片元数据
+                message["ImageInfo"] = {
+                    "aeskey": img_element.get('aeskey'),
+                    "cdnmidimgurl": img_element.get('cdnmidimgurl'),
+                    "length": img_element.get('length'),
+                    "md5": img_element.get('md5'),
+                    "cdnthumburl": img_element.get('cdnthumburl'),
+                    "cdnthumbaeskey": img_element.get('cdnthumbaeskey')
+                }
+                logger.debug(f"解析图片XML成功: aeskey={message['ImageInfo']['aeskey']}, length={message['ImageInfo']['length']}, md5={message['ImageInfo']['md5']}")
         except Exception as e:
             logger.error("解析图片消息失败: {}, 内容: {}", e, message["Content"])
-            return
+            message["ImageInfo"] = {}
 
-        # 尝试使用新的get_msg_image方法分段下载图片
-        try:
-            if length and length.isdigit():
-                img_length = int(length)
-                logger.debug(f"尝试使用get_msg_image下载图片: MsgId={message.get('MsgId')}, length={img_length}")
-
-                # 分段下载图片
-                chunk_size = 64 * 1024  # 64KB
-                chunks = (img_length + chunk_size - 1) // chunk_size  # 向上取整
-                full_image_data = bytearray()
-
-                logger.info(f"开始分段下载图片，总大小: {img_length} 字节，分 {chunks} 段下载")
-
-                download_success = True
-                for i in range(chunks):
-                    try:
-                        # 下载当前段
-                        start_pos = i * chunk_size
-                        chunk_data = await self.bot.get_msg_image(message.get('MsgId'), message["FromWxid"], img_length, start_pos=start_pos)
-                        if chunk_data and len(chunk_data) > 0:
-                            full_image_data.extend(chunk_data)
-                            logger.debug(f"第 {i+1}/{chunks} 段下载成功，大小: {len(chunk_data)} 字节")
-                        else:
-                            logger.error(f"第 {i+1}/{chunks} 段下载失败，数据为空")
-                            download_success = False
-                            break
-                    except Exception as e:
-                        logger.error(f"下载第 {i+1}/{chunks} 段时出错: {e}")
-                        download_success = False
-                        break
-
-                if download_success and len(full_image_data) > 0:
-                    # 验证图片数据
-                    try:
-                        import base64
-                        from PIL import Image, ImageFile
-                        ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许加载截断的图片
-
-                        image_data = bytes(full_image_data)
-                        # 验证图片数据
-                        Image.open(io.BytesIO(image_data))
-                        message["Content"] = base64.b64encode(image_data).decode('utf-8')
-                        logger.info(f"分段下载图片成功，总大小: {len(image_data)} 字节")
-                    except Exception as img_error:
-                        logger.error(f"验证分段下载的图片数据失败: {img_error}")
-                        # 如果验证失败，尝试使用download_image
-                        if aeskey and cdnmidimgurl:
-                            logger.warning("尝试使用download_image下载图片")
-                            message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
-                else:
-                    logger.warning(f"分段下载图片失败，已下载: {len(full_image_data)}/{img_length} 字节")
-                    # 如果分段下载失败，尝试使用download_image
-                    if aeskey and cdnmidimgurl:
-                        logger.warning("尝试使用download_image下载图片")
-                        message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
-            elif aeskey and cdnmidimgurl:
-                logger.debug("使用download_image下载图片")
-                message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
-        except Exception as e:
-            logger.error(f"下载图片失败: {e}")
-            if aeskey and cdnmidimgurl:
-                try:
-                    message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
-                except Exception as e2:
-                    logger.error(f"备用方法下载图片也失败: {e2}")
+        # 不再自动下载图片，让插件自己决定何时下载
+        logger.debug(f"图片元数据已添加到消息对象，插件可自行决定是否下载")
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
