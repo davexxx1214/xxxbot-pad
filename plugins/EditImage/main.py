@@ -13,12 +13,15 @@ from PIL import Image
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
 import regex  # 不是re，是regex库，支持\p{Zs}
+import asyncio # 新增
+import google.generativeai as genai # 新增
+from google.generativeai import types as genai_types # 新增
 
 
 class EditImage(PluginBase):
-    description = "垫图插件"
+    description = "垫图和修图插件" # 修改描述
     author = "老夏"
-    version = "1.0.0"
+    version = "1.0.1" # 修改版本
     is_ai_platform = False
 
     def __init__(self):
@@ -33,15 +36,38 @@ class EditImage(PluginBase):
             self.openai_image_api_key = plugin_config.get("openai_image_api_key", None)
             self.openai_image_api_base = plugin_config.get("openai_image_api_base", None)
             self.image_model = plugin_config.get("image_model", "gpt-image-1")
+
+            # 新增 Gemini 相关配置
+            self.inpaint_prefix = plugin_config.get("inpaint_prefix", "修图")
+            self.google_api_key = plugin_config.get("google_api_key", None)
+            self.gemini_model_name = plugin_config.get("gemini_model_name", "models/gemini-pro-vision") # 默认使用 vision
+
         except Exception as e:
-            logger.error(f"加载垫图插件配置文件失败: {e}")
+            logger.error(f"加载垫图/修图插件配置文件失败: {e}") # 修改日志
             raise
         # 记录待垫图状态: {user_or_group_id: {timestamp, prompt}}
         self.waiting_edit_image = {}
+        # 新增：记录待修图状态
+        self.waiting_inpaint_image = {}
+
         # 图片缓存，防止重复处理
         self.image_msgid_cache = set()
-        self.image_cache_timeout = 60
-        self.image_cache = {}
+        self.image_cache_timeout = 60 # 未使用
+        self.image_cache = {} # 未使用
+
+        # 初始化Google Gemini客户端
+        if self.google_api_key:
+            try:
+                genai.configure(api_key=self.google_api_key)
+                self.gemini_client = genai.GenerativeModel(self.gemini_model_name)
+                logger.info(f"[EditImage] Google Gemini client initialized with model {self.gemini_model_name}.")
+            except Exception as e:
+                logger.error(f"[EditImage] Failed to initialize Google Gemini client: {e}")
+                self.gemini_client = None
+        else:
+            logger.warning("[EditImage] Google API key not provided, Gemini修图功能将不可用。")
+            self.gemini_client = None
+
 
     def is_at_message(self, message: dict) -> bool:
         if not message.get("IsGroup"):
@@ -69,55 +95,107 @@ class EditImage(PluginBase):
         content = message["Content"].strip()
         if not content:
             return True
-        is_trigger = False
-        user_prompt = None
-        # 改为：只要内容包含edit_image_prefix即可
+        
+        key = self.get_waiting_key(message)
+        
+        # 处理 "垫图" 指令
         if self.edit_image_prefix in content:
-            is_trigger = True
             idx = content.find(self.edit_image_prefix)
             user_prompt = content[idx + len(self.edit_image_prefix):].strip()
-        if is_trigger:
-            key = self.get_waiting_key(message)
             if not user_prompt:
                 user_prompt = "请描述您要编辑图片的内容。"
             self.waiting_edit_image[key] = {
                 "timestamp": time.time(),
                 "prompt": user_prompt
             }
-            tip = "💡已开启图片编辑模式(gpt-4o)，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
+            # 清除可能存在的修图状态
+            if key in self.waiting_inpaint_image:
+                del self.waiting_inpaint_image[key]
+            tip = f"💡已开启图片编辑模式({self.image_model})，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-            return False  # 阻止后续插件处理
-        return True  # 允许后续插件处理
+            return False
+
+        # 新增：处理 "修图" (Gemini Inpaint) 指令
+        if self.inpaint_prefix in content:
+            if not self.gemini_client:
+                tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
+
+            idx = content.find(self.inpaint_prefix)
+            user_prompt = content[idx + len(self.inpaint_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "请描述您要对图片进行的修改。" # Gemini 的提示可以更通用
+            self.waiting_inpaint_image[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            # 清除可能存在的垫图状态
+            if key in self.waiting_edit_image:
+                del self.waiting_edit_image[key]
+            tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False
+            
+        return True
 
     @on_at_message(priority=30)
     async def handle_at(self, bot, message: dict):
         if not self.enable:
             return True
         content = message["Content"].strip()
-        is_trigger = False
-        user_prompt = None
-        if self.edit_image_prefix in content:
-            is_trigger = True
-            idx = content.find(self.edit_image_prefix)
-            user_prompt = content[idx + len(self.edit_image_prefix):].strip()
-        if is_trigger:
-            key = self.get_waiting_key(message)
+        # 移除@前缀，方便匹配
+        cleaned_content = regex.sub(f"^@[^\\s]+\\s*", "", content).strip()
+
+        key = self.get_waiting_key(message)
+
+        # 处理 "垫图" 指令
+        if self.edit_image_prefix in cleaned_content:
+            idx = cleaned_content.find(self.edit_image_prefix)
+            user_prompt = cleaned_content[idx + len(self.edit_image_prefix):].strip()
             if not user_prompt:
                 user_prompt = "请描述您要编辑图片的内容。"
             self.waiting_edit_image[key] = {
                 "timestamp": time.time(),
                 "prompt": user_prompt
             }
-            tip = "💡已开启图片编辑模式(gpt-4o)，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
-            if message["IsGroup"]:
+            if key in self.waiting_inpaint_image:
+                del self.waiting_inpaint_image[key]
+            tip = f"💡已开启图片编辑模式({self.image_model})，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
+            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            return False
+
+        # 新增：处理 "修图" (Gemini Inpaint) 指令
+        if self.inpaint_prefix in cleaned_content:
+            if not self.gemini_client:
+                tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-            else:
-                await bot.send_text_message(message["FromWxid"], tip)
-            return False  # 阻止后续插件处理
-        return True  # 允许后续插件处理
+                return False
+                
+            idx = cleaned_content.find(self.inpaint_prefix)
+            user_prompt = cleaned_content[idx + len(self.inpaint_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "请描述您要对图片进行的修改。"
+            self.waiting_inpaint_image[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            if key in self.waiting_edit_image:
+                del self.waiting_edit_image[key]
+            tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
+            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            return False
+            
+        return True
 
     @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
@@ -125,19 +203,16 @@ class EditImage(PluginBase):
             return True
         msg_id = message.get("MsgId")
         from_wxid = message.get("FromWxid")
-        sender_wxid = message.get("SenderWxid")
+        # sender_wxid = message.get("SenderWxid") # 在具体处理函数中使用
         xml_content = message.get("Content")
-        logger.info(f"EditImage: 收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, SenderWxid={sender_wxid}, ContentType={type(xml_content)}")
-        # 消息ID去重
+        logger.info(f"EditImage: 收到图片消息: MsgId={msg_id}, FromWxid={from_wxid}, ContentType={type(xml_content)}")
+        
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"EditImage: 消息ID {msg_id} 已处理或无效，跳过")
             return True
+            
         key = self.get_waiting_key(message)
-        waiting_info = self.waiting_edit_image.get(key)
-        if not waiting_info:
-            logger.info(f"EditImage: 当前无待垫图状态: {key}")
-            return True
-        user_prompt = waiting_info.get("prompt", "请描述您要编辑图片的内容。")
+        
         image_bytes = b""
         # 1. xml格式，分段下载
         if isinstance(xml_content, str) and "<img " in xml_content:
@@ -171,7 +246,6 @@ class EditImage(PluginBase):
             try:
                 if len(xml_content) > 100 and not xml_content.strip().startswith("<?xml"):
                     logger.info("EditImage: 尝试base64解码图片内容")
-                    import base64
                     image_bytes = base64.b64decode(xml_content)
             except Exception as e:
                 logger.warning(f"EditImage: base64解码失败: {e}")
@@ -180,20 +254,48 @@ class EditImage(PluginBase):
         if image_bytes and len(image_bytes) > 0:
             try:
                 Image.open(io.BytesIO(image_bytes))
-                logger.info(f"EditImage: 图片校验通过，准备垫图，大小: {len(image_bytes)} 字节")
-                await self.handle_edit_image(image_bytes, bot, message, user_prompt)
+                logger.info(f"EditImage: 图片校验通过，准备处理，大小: {len(image_bytes)} 字节")
             except Exception as e:
                 logger.error(f"EditImage: 图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
+                return True # 允许其他插件处理或不处理
         else:
-            logger.warning("EditImage: 未能获取到有效的图片数据，未垫图")
-        # 状态清理
-        self.waiting_edit_image.pop(key, None)
-        self.image_msgid_cache.add(msg_id)
-        logger.info(f"EditImage: 垫图流程结束: MsgId={msg_id}")
-        return False
+            logger.warning("EditImage: 未能获取到有效的图片数据，跳过处理")
+            return True # 允许其他插件处理或不处理
 
-    async def handle_edit_image(self, image_bytes, bot, message, prompt):
-        """调用图片编辑API并返回结果"""
+        # 检查是否有垫图任务
+        waiting_edit_info = self.waiting_edit_image.get(key)
+        if waiting_edit_info:
+            user_prompt = waiting_edit_info.get("prompt", "请描述您要编辑图片的内容。")
+            logger.info(f"EditImage: 检测到垫图任务 for key {key}, prompt: {user_prompt}")
+            await self.handle_edit_image_openai(image_bytes, bot, message, user_prompt) # 修改函数名以区分
+            self.waiting_edit_image.pop(key, None)
+            self.image_msgid_cache.add(msg_id)
+            logger.info(f"EditImage: 垫图流程结束: MsgId={msg_id}")
+            return False # 阻止后续插件处理
+
+        # 新增：检查是否有Gemini修图任务
+        waiting_inpaint_info = self.waiting_inpaint_image.get(key)
+        if waiting_inpaint_info:
+            if not self.gemini_client:
+                logger.warning(f"EditImage: Gemini修图任务 for key {key} 但客户端未初始化。")
+                # 可以选择回复用户或静默失败
+                self.waiting_inpaint_image.pop(key, None)
+                return True # 允许其他插件处理
+
+            user_prompt = waiting_inpaint_info.get("prompt", "请描述您要对图片进行的修改。")
+            logger.info(f"EditImage: 检测到Gemini修图任务 for key {key}, prompt: {user_prompt}")
+            await self.handle_inpaint_image_with_gemini(image_bytes, bot, message, user_prompt)
+            self.waiting_inpaint_image.pop(key, None)
+            self.image_msgid_cache.add(msg_id)
+            logger.info(f"EditImage: Gemini修图流程结束: MsgId={msg_id}")
+            return False # 阻止后续插件处理
+            
+        logger.info(f"EditImage: MsgId={msg_id} 无待处理的编辑或修图任务")
+        return True
+
+
+    async def handle_edit_image_openai(self, image_bytes, bot, message, prompt): # 重命名原函数
+        """调用OpenAI图片编辑API并返回结果"""
         import uuid
         import tempfile
         import base64
@@ -273,3 +375,99 @@ class EditImage(PluginBase):
                 os.remove(tmp_file_path)
             except Exception:
                 pass
+
+    async def handle_inpaint_image_with_gemini(self, image_bytes: bytes, bot, message: dict, prompt: str):
+        """使用Google Gemini API编辑图片"""
+        if not self.gemini_client:
+            logger.error("[EditImage] Gemini client not initialized, skipping inpaint.")
+            # 可以选择向用户发送错误消息
+            return
+
+        tip_msg = f"🎨 Gemini修图服务({self.gemini_model_name})请求已提交，请稍候...\n提示词：{prompt}"
+        if message["IsGroup"]:
+            await bot.send_at_message(message["FromWxid"], tip_msg, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], tip_msg)
+
+        try:
+            pil_image = Image.open(io.BytesIO(image_bytes))
+            
+            # Gemini API 安全设置 (参考 stability.py)
+            safety_settings = [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+
+            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}")
+
+            # 使用 asyncio.to_thread 执行阻塞的API调用
+            response = await asyncio.to_thread(
+                self.gemini_client.generate_content,
+                contents=[prompt, pil_image],
+                # generation_config: 似乎不需要显式设置response_modalities，模型会自动处理
+                safety_settings=safety_settings,
+            )
+            
+            # 处理响应 (参考 stability.py)
+            if (hasattr(response, 'candidates') and response.candidates and
+                hasattr(response.candidates[0], 'finish_reason')):
+                finish_reason_str = str(response.candidates[0].finish_reason)
+                # FinishReason enums: FINISH_REASON_UNSPECIFIED, STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
+                if 'SAFETY' in finish_reason_str.upper() : # 更通用的安全检查
+                    logger.error(f"[EditImage] Gemini: Detected image safety issue: {finish_reason_str}")
+                    error_message = "由于图像安全策略限制，无法处理该图像。请尝试使用其他图片或修改提示词。"
+                    if message["IsGroup"]:
+                        await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], error_message)
+                    return
+
+            if not (hasattr(response, 'candidates') and response.candidates and
+                    response.candidates[0].content and
+                    hasattr(response.candidates[0].content, 'parts')):
+                logger.error("[EditImage] Gemini: Invalid response structure or no content/parts.")
+                # 检查prompt_feedback是否有阻塞信息
+                if response.prompt_feedback and response.prompt_feedback.block_reason:
+                    logger.error(f"[EditImage] Gemini: Prompt blocked due to {response.prompt_feedback.block_reason}")
+                    error_message = f"请求被安全策略阻止: {response.prompt_feedback.block_reason}。请修改提示词。"
+                else:
+                    error_message = "Gemini修图失败，未能生成图片或返回了无效的响应。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], error_message)
+                return
+            
+            edited_image_bytes = None
+            for part in response.candidates[0].content.parts:
+                if part.inline_data and part.inline_data.data:
+                    edited_image_bytes = part.inline_data.data
+                    logger.info("[EditImage] Gemini: Successfully received image data.")
+                    break
+            
+            if edited_image_bytes:
+                # 发送图片
+                if message["IsGroup"]:
+                    await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                    await bot.send_at_message(message["FromWxid"], "🖼️ 您的图片已由Gemini修图完成！", [message["SenderWxid"]])
+                else:
+                    await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                    await bot.send_text_message(message["FromWxid"], "🖼️ 您的图片已由Gemini修图完成！")
+            else:
+                logger.error("[EditImage] Gemini: No image data found in response parts.")
+                error_message = "Gemini修图失败，API没有返回有效的图片数据。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], error_message)
+
+        except Exception as e:
+            logger.error(f"[EditImage] Gemini inpaint service exception: {e}")
+            logger.error(traceback.format_exc())
+            error_message = f"Gemini修图服务出错: {str(e)}"
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], error_message)
