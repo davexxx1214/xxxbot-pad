@@ -392,12 +392,24 @@ class EditImage(PluginBase):
         try:
             pil_image = Image.open(io.BytesIO(image_bytes))
             
-            # Gemini API 安全设置 (参考 stability.py)
+            # Gemini API 安全设置 (修正为 genai_types.SafetySetting 对象)
             safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
             ]
 
             logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}")
