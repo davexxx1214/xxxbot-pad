@@ -392,12 +392,24 @@ class EditImage(PluginBase):
         try:
             pil_image = Image.open(io.BytesIO(image_bytes))
             
-            # Gemini API 安全设置 (参考 stability.py)
+            # Gemini API 安全设置 (修正为 genai_types.SafetySetting 对象)
             safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                ),
             ]
 
             logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}")
@@ -424,28 +436,39 @@ class EditImage(PluginBase):
                         await bot.send_text_message(message["FromWxid"], error_message)
                     return
 
+            edited_image_bytes = None
+            has_text_part = False
+            text_parts_content = []
+
             if not (hasattr(response, 'candidates') and response.candidates and
                     response.candidates[0].content and
-                    hasattr(response.candidates[0].content, 'parts')):
-                logger.error("[EditImage] Gemini: Invalid response structure or no content/parts.")
-                # 检查prompt_feedback是否有阻塞信息
-                if response.prompt_feedback and response.prompt_feedback.block_reason:
-                    logger.error(f"[EditImage] Gemini: Prompt blocked due to {response.prompt_feedback.block_reason}")
-                    error_message = f"请求被安全策略阻止: {response.prompt_feedback.block_reason}。请修改提示词。"
-                else:
-                    error_message = "Gemini修图失败，未能生成图片或返回了无效的响应。"
+                    hasattr(response.candidates[0].content, 'parts') and
+                    response.candidates[0].content.parts):
+                logger.error("[EditImage] Gemini: Response has no parts or invalid structure before parsing parts.")
+                # 此情况应已被上面的 'Invalid response structure' 检查覆盖并设置了 error_message
+                # 如果没有，则设置一个通用错误
+                if not 'error_message' in locals(): # 确保 error_message 已定义
+                     error_message = "Gemini修图失败，API返回的响应结构无效。"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], error_message)
                 return
-            
-            edited_image_bytes = None
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    edited_image_bytes = part.inline_data.data
-                    logger.info("[EditImage] Gemini: Successfully received image data.")
-                    break
+            else:
+                logger.info(f"[EditImage] Gemini: Iterating through {len(response.candidates[0].content.parts)} parts in response.")
+                for part_idx, part in enumerate(response.candidates[0].content.parts):
+                    logger.info(f"[EditImage] Gemini: Processing part {part_idx + 1} of {len(response.candidates[0].content.parts)}.")
+                    if hasattr(part, 'text') and part.text:
+                        logger.info(f"[EditImage] Gemini: Part {part_idx + 1} is a text part: '{part.text[:200].replace('\n', ' ')}...'" )
+                        has_text_part = True
+                        text_parts_content.append(part.text)
+                    
+                    if hasattr(part, 'inline_data') and part.inline_data and hasattr(part.inline_data, 'data') and part.inline_data.data:
+                        edited_image_bytes = part.inline_data.data
+                        logger.info(f"[EditImage] Gemini: Part {part_idx + 1} is image data. Successfully received.")
+                        break # 找到图片，停止处理其他部分
+                    else:
+                        logger.info(f"[EditImage] Gemini: Part {part_idx + 1} does not contain image data (inline_data: {hasattr(part, 'inline_data')}, inline_data.data: {hasattr(part, 'inline_data') and part.inline_data and hasattr(part.inline_data, 'data')}).")
             
             if edited_image_bytes:
                 # 发送图片
@@ -456,8 +479,15 @@ class EditImage(PluginBase):
                     await bot.send_image_message(message["FromWxid"], edited_image_bytes)
                     await bot.send_text_message(message["FromWxid"], "🖼️ 您的图片已由Gemini修图完成！")
             else:
-                logger.error("[EditImage] Gemini: No image data found in response parts.")
-                error_message = "Gemini修图失败，API没有返回有效的图片数据。"
+                # This block is reached if edited_image_bytes is still None after checking all parts
+                if has_text_part:
+                    full_text_response = " ".join(text_parts_content).replace('\n', ' ')
+                    logger.error(f"[EditImage] Gemini: No image data found. Received text part(s) instead: {full_text_response[:500]}...")
+                    error_message = f"Gemini修图未能返回图片，而是返回了文本信息。请检查提示或图片内容。"
+                else:
+                    logger.error("[EditImage] Gemini: No image data found in response parts, and no text parts identified.")
+                    error_message = "Gemini修图失败，API没有返回有效的图片数据或文本说明。"
+                
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
                 else:
