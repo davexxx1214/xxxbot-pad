@@ -12,10 +12,10 @@ import traceback
 from PIL import Image
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message, on_image_message
-import regex  # 不是re，是regex库，支持\p{Zs}
+import regex  # 不是re，是regex库，支持\\p{Zs}
 import asyncio # 新增
 import google.generativeai as genai # 新增
-from google.generativeai import types as genai_types # 新增
+from google.generativeai.types import SafetySetting, HarmCategory, HarmBlockThreshold
 
 
 class EditImage(PluginBase):
@@ -392,23 +392,23 @@ class EditImage(PluginBase):
         try:
             pil_image = Image.open(io.BytesIO(image_bytes))
             
-            # Gemini API 安全设置 (修正为 genai_types.SafetySetting 对象)
+            # Gemini API 安全设置 (使用直接导入的类型)
             safety_settings = [
-                genai_types.SafetySetting(
-                    category=genai_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE
                 ),
-                genai_types.SafetySetting(
-                    category=genai_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=HarmBlockThreshold.BLOCK_NONE
                 ),
-                genai_types.SafetySetting(
-                    category=genai_types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE
                 ),
-                genai_types.SafetySetting(
-                    category=genai_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE
                 ),
             ]
 
