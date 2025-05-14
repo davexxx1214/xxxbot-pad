@@ -405,32 +405,34 @@ class EditImage(PluginBase):
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ]
 
-            # Attempt to add generation_config - REMOVING for this test
-            # generation_config = None
-            # try:
-            #     # Try to use the typed object if available in this version
-            #     generation_config = genai_types.GenerationConfig(
-            #         response_modalities=[genai_types.GenerateContentResponseMimeType.IMAGE] # Assuming enum structure
-            #     )
-            #     logger.info("[EditImage] Using genai_types.GenerationConfig for response modality.")
-            # except AttributeError:
-            #     logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
-            #     # Fallback to dictionary if typed object is not available or causes error
-            #     # This version caused KeyError: 'Text' in the previous run
-            #     generation_config = {
-            #         "response_modalities": ["Text", "Image"] 
-            #     }
-            # except Exception as e:
-            #     logger.error(f"[EditImage] Error preparing generation_config: {e}. Proceeding without explicit generation_config.")
+            generation_config = None
+            try:
+                # Try to use genai.GenerationConfig directly
+                generation_config = genai.GenerationConfig(
+                    response_modalities=["TEXT", "IMAGE"] # Using uppercase strings, hoping this constructor handles them
+                )
+                logger.info("[EditImage] Successfully created genai.GenerationConfig.")
+            except AttributeError:
+                logger.warning("[EditImage] genai.GenerationConfig not found. The API structure might be different.")
+                # Fallback to a dictionary if the class isn't found - this led to errors before but kept as a known path
+                generation_config = {
+                     "response_modalities": ["TEXT", "IMAGE"]
+                }
+            except Exception as e:
+                logger.error(f"[EditImage] Error creating GenerationConfig: {e}. Proceeding with dictionary or None.")
+                # Fallback to dictionary if other errors occur during typed object creation
+                generation_config = {
+                     "response_modalities": ["TEXT", "IMAGE"]
+                }
 
-            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}. No explicit generation_config.")
 
-            # Use asyncio.to_thread 执行阻塞的API调用
+            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}. Using generation_config: {generation_config}")
+
             response = await asyncio.to_thread(
                 self.gemini_client.generate_content,
                 contents=[prompt, pil_image],
-                safety_settings=safety_settings
-                # generation_config=generation_config # REMOVED
+                safety_settings=safety_settings,
+                generation_config=generation_config # Pass the created or fallback config
             )
             
             # 处理响应 (参考 stability.py)
