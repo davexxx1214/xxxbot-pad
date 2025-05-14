@@ -17,7 +17,7 @@ import asyncio # 新增
 import google.generativeai as genai # 新增
 # Revert to importing the types module and aliasing it
 from google.generativeai import types as genai_types
-import tempfile # Added for temporary file handling
+# import tempfile # No longer needed for this version
 
 
 class EditImage(PluginBase):
@@ -391,16 +391,11 @@ class EditImage(PluginBase):
         else:
             await bot.send_text_message(message["FromWxid"], tip_msg)
 
-        temp_file_path = None # Initialize outside try block for access in finally
+        # temp_file_path = None # No longer using temporary file
         try:
-            # Create a temporary file to save the image bytes
-            # Suffix might need to be determined from image_bytes if not always PNG/JPG compatible
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                tmp_file.write(image_bytes)
-                temp_file_path = tmp_file.name
-            
-            logger.info(f"[EditImage] Image bytes saved to temporary file: {temp_file_path}")
-            pil_image = Image.open(temp_file_path) # Open from the temporary file path
+            # Revert to creating PIL.Image directly from image_bytes
+            pil_image = Image.open(io.BytesIO(image_bytes))
+            logger.info("[EditImage] PIL.Image created directly from image_bytes.")
             
             # Revert safety_settings to a list of dictionaries
             safety_settings = [
@@ -410,32 +405,32 @@ class EditImage(PluginBase):
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
             ]
 
-            # Attempt to add generation_config
-            generation_config = None
-            try:
-                # Try to use the typed object if available in this version
-                generation_config = genai_types.GenerationConfig(
-                    response_modalities=[genai_types.GenerateContentResponseMimeType.IMAGE] # Assuming enum structure
-                )
-                logger.info("[EditImage] Using genai_types.GenerationConfig for response modality.")
-            except AttributeError:
-                logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
-                # Fallback to dictionary if typed object is not available or causes error
-                # This version caused KeyError: 'Text' in the previous run, kept for this test per user direction
-                generation_config = {
-                    "response_modalities": ["Text", "Image"] 
-                }
-            except Exception as e:
-                logger.error(f"[EditImage] Error preparing generation_config: {e}. Proceeding without explicit generation_config.")
+            # Attempt to add generation_config - REMOVING for this test
+            # generation_config = None
+            # try:
+            #     # Try to use the typed object if available in this version
+            #     generation_config = genai_types.GenerationConfig(
+            #         response_modalities=[genai_types.GenerateContentResponseMimeType.IMAGE] # Assuming enum structure
+            #     )
+            #     logger.info("[EditImage] Using genai_types.GenerationConfig for response modality.")
+            # except AttributeError:
+            #     logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
+            #     # Fallback to dictionary if typed object is not available or causes error
+            #     # This version caused KeyError: 'Text' in the previous run
+            #     generation_config = {
+            #         "response_modalities": ["Text", "Image"] 
+            #     }
+            # except Exception as e:
+            #     logger.error(f"[EditImage] Error preparing generation_config: {e}. Proceeding without explicit generation_config.")
 
-            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}")
+            logger.info(f"[EditImage] Sending request to Gemini with prompt: {prompt}. No explicit generation_config.")
 
             # Use asyncio.to_thread 执行阻塞的API调用
             response = await asyncio.to_thread(
                 self.gemini_client.generate_content,
                 contents=[prompt, pil_image],
-                safety_settings=safety_settings,
-                generation_config=generation_config # Add generation_config
+                safety_settings=safety_settings
+                # generation_config=generation_config # REMOVED
             )
             
             # 处理响应 (参考 stability.py)
@@ -499,10 +494,10 @@ class EditImage(PluginBase):
                 await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], error_message)
-        finally:
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                    logger.info(f"[EditImage] Temporary image file {temp_file_path} deleted.")
-                except Exception as e:
-                    logger.error(f"[EditImage] Error deleting temporary image file {temp_file_path}: {e}")
+        # finally:
+            # if temp_file_path and os.path.exists(temp_file_path):
+            #     try:
+            #         os.remove(temp_file_path)
+            #         logger.info(f"[EditImage] Temporary image file {temp_file_path} deleted.")
+            #     except Exception as e:
+            #         logger.error(f"[EditImage] Error deleting temporary image file {temp_file_path}: {e}")
