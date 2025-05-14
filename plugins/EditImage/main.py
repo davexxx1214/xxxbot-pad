@@ -120,7 +120,9 @@ class EditImage(PluginBase):
 
         # 新增：处理 "修图" (Gemini Inpaint) 指令
         if self.inpaint_prefix in content:
+            logger.info(f"[EditImage] Matched inpaint_prefix ('{self.inpaint_prefix}'). Entering Gemini修图 block. Content: '{content[:50]}...'")
             if not self.gemini_client:
+                logger.warning("[EditImage] Gemini client not available for 修图. Replying to user and returning False.")
                 tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
@@ -131,19 +133,34 @@ class EditImage(PluginBase):
             idx = content.find(self.inpaint_prefix)
             user_prompt = content[idx + len(self.inpaint_prefix):].strip()
             if not user_prompt:
-                user_prompt = "请描述您要对图片进行的修改。" # Gemini 的提示可以更通用
+                user_prompt = "请描述您要对图片进行的修改。" 
+            
+            logger.info(f"[EditImage] Gemini修图 - User prompt extracted: '{user_prompt}'")
+            logger.info(f"[EditImage] Gemini修图 - Setting waiting_inpaint_image for key: {key}")
             self.waiting_inpaint_image[key] = {
                 "timestamp": time.time(),
                 "prompt": user_prompt
             }
-            # 清除可能存在的垫图状态
+            
             if key in self.waiting_edit_image:
+                logger.info(f"[EditImage] Gemini修图 - Clearing waiting_edit_image for key: {key} as inpaint mode is activated.")
                 del self.waiting_edit_image[key]
+                
             tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
-            if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-            else:
-                await bot.send_text_message(message["FromWxid"], tip)
+            logger.info(f"[EditImage] Gemini修图 - Tip constructed: '{tip[:100]}...'")
+            
+            try:
+                if message["IsGroup"]:
+                    logger.info(f"[EditImage] Gemini修图 - Attempting to send at_message to G:{message['FromWxid']} U:{message['SenderWxid']}")
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    logger.info(f"[EditImage] Gemini修图 - Attempting to send text_message to U:{message['FromWxid']}")
+                    await bot.send_text_message(message["FromWxid"], tip)
+                logger.info("[EditImage] Gemini修图 - Tip message supposedly sent.")
+            except Exception as e:
+                logger.error(f"[EditImage] Gemini修图 - Error sending tip message: {e}")
+            
+            logger.info("[EditImage] Gemini修图 - Returning False to stop further processing.")
             return False
             
         return True
