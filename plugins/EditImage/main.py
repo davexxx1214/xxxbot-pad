@@ -17,6 +17,7 @@ import asyncio # 新增
 import google.generativeai as genai # 新增
 # Revert to importing the types module and aliasing it
 from google.generativeai import types as genai_types
+import tempfile # Added for temporary file handling
 
 
 class EditImage(PluginBase):
@@ -390,8 +391,16 @@ class EditImage(PluginBase):
         else:
             await bot.send_text_message(message["FromWxid"], tip_msg)
 
+        temp_file_path = None # Initialize outside try block for access in finally
         try:
-            pil_image = Image.open(io.BytesIO(image_bytes))
+            # Create a temporary file to save the image bytes
+            # Suffix might need to be determined from image_bytes if not always PNG/JPG compatible
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                tmp_file.write(image_bytes)
+                temp_file_path = tmp_file.name
+            
+            logger.info(f"[EditImage] Image bytes saved to temporary file: {temp_file_path}")
+            pil_image = Image.open(temp_file_path) # Open from the temporary file path
             
             # Revert safety_settings to a list of dictionaries
             safety_settings = [
@@ -412,7 +421,7 @@ class EditImage(PluginBase):
             except AttributeError:
                 logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
                 # Fallback to dictionary if typed object is not available or causes error
-                # Match the modalities used in stability.py: ['Text', 'Image']
+                # This version caused KeyError: 'Text' in the previous run, kept for this test per user direction
                 generation_config = {
                     "response_modalities": ["Text", "Image"] 
                 }
@@ -490,3 +499,10 @@ class EditImage(PluginBase):
                 await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], error_message)
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                    logger.info(f"[EditImage] Temporary image file {temp_file_path} deleted.")
+                except Exception as e:
+                    logger.error(f"[EditImage] Error deleting temporary image file {temp_file_path}: {e}")
