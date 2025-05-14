@@ -412,8 +412,9 @@ class EditImage(PluginBase):
             except AttributeError:
                 logger.warning("[EditImage] genai_types.GenerationConfig or GenerateContentResponseMimeType not found, falling back to dict for generation_config.")
                 # Fallback to dictionary if typed object is not available or causes error
+                # Match the modalities used in stability.py: ['Text', 'Image']
                 generation_config = {
-                    "response_modalities": ["IMAGE"] # Using plain string, hoping API understands
+                    "response_modalities": ["Text", "Image"] 
                 }
             except Exception as e:
                 logger.error(f"[EditImage] Error preparing generation_config: {e}. Proceeding without explicit generation_config.")
