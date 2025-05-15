@@ -28,6 +28,8 @@ class EditImage(PluginBase):
 
     def __init__(self):
         super().__init__()
+        self.files_dir = "files"  # Define files directory for MD5 lookup
+        os.makedirs(self.files_dir, exist_ok=True)
         try:
             with open("plugins/EditImage/config.toml", "rb") as f:
                 config = tomllib.load(f)
@@ -295,6 +297,143 @@ class EditImage(PluginBase):
         logger.info(f"EditImage: MsgId={msg_id} 无待处理的编辑或修图任务")
         return True
 
+    async def find_image_by_md5(self, md5: str) -> bytes | None:
+        """Finds an image by its MD5 hash in the local files directory."""
+        if not md5:
+            logger.warning("EditImage: MD5 is empty, cannot find image.")
+            return None
+        common_extensions = ["jpeg", "jpg", "png", "gif", "webp"]
+        for ext in common_extensions:
+            file_path = os.path.join(self.files_dir, f"{md5}.{ext}")
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as f:
+                        image_data = f.read()
+                    logger.info(f"EditImage: Found image by MD5: {file_path}, size: {len(image_data)} bytes")
+                    return image_data
+                except Exception as e:
+                    logger.error(f"EditImage: Failed to read image file {file_path} by MD5: {e}")
+                    return None
+        logger.warning(f"EditImage: Image file with MD5 {md5} not found in {self.files_dir} with common extensions.")
+        return None
+
+    @on_quote_message(priority=31)
+    async def handle_quote_edit_or_inpaint(self, bot, message: dict):
+        if not self.enable:
+            return True
+
+        current_msg_id = message.get("MsgId")
+        if current_msg_id and current_msg_id in self.image_msgid_cache:
+            logger.info(f"EditImage (quote): Message ID {current_msg_id} already processed, skipping.")
+            return True
+
+        content = message["Content"].strip()
+        quote_info = message.get("Quote", {})
+
+        if not (quote_info.get("MsgType") == 3): # Must be quoting an image
+            return True
+
+        is_edit_task = self.edit_image_prefix in content
+        is_inpaint_task = self.inpaint_prefix in content
+
+        if not (is_edit_task or is_inpaint_task):
+            return True # Not a quote for edit or inpaint
+
+        logger.info(f"EditImage (quote): Detected prefix in quote message for an image. MsgId: {current_msg_id}")
+
+        user_prompt = ""
+        task_type = ""
+
+        if is_edit_task:
+            task_type = "垫图"
+            idx = content.find(self.edit_image_prefix)
+            user_prompt = content[idx + len(self.edit_image_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "请描述您要编辑图片的内容。"
+        elif is_inpaint_task:
+            task_type = "修图"
+            if not self.gemini_client:
+                tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
+                if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else: await bot.send_text_message(message["FromWxid"], tip)
+                if current_msg_id: self.image_msgid_cache.add(current_msg_id) # Cache to prevent retry
+                return False # Handled (error reported)
+            
+            idx = content.find(self.inpaint_prefix)
+            user_prompt = content[idx + len(self.inpaint_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "请描述您要对图片进行的修改。"
+        
+        logger.info(f"EditImage (quote): Task: {task_type}, User prompt: '{user_prompt}'")
+
+        quoted_xml_content = quote_info.get("Content")
+        if not quoted_xml_content:
+            logger.warning(f"EditImage (quote): Quoted message XML content is missing for MsgId: {current_msg_id}.")
+            # Optionally inform user
+            return True # Let other handlers try if they can make sense of it
+
+        image_bytes = b""
+        md5 = None
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(quoted_xml_content)
+            img_elem = root.find("img")
+            if img_elem is not None:
+                md5 = img_elem.get("md5")
+                length_str = img_elem.get("length", "0")
+                logger.info(f"EditImage (quote): Parsed quoted image XML: md5={md5}, length={length_str}")
+                if md5:
+                    image_bytes = await self.find_image_by_md5(md5)
+                    if image_bytes:
+                        logger.info(f"EditImage (quote): Image found locally by MD5: {md5}, size: {len(image_bytes)}")
+                    else:
+                        logger.warning(f"EditImage (quote): Image with MD5 {md5} not found locally.")
+                else:
+                    logger.warning(f"EditImage (quote): MD5 not found in quoted image XML.")
+            else:
+                logger.warning(f"EditImage (quote): No <img> element in quoted XML for MsgId: {current_msg_id}.")
+        except Exception as e:
+            logger.error(f"EditImage (quote): Failed to parse quoted XML or find by MD5 for MsgId: {current_msg_id}: {e}")
+            image_bytes = b""
+
+        if image_bytes and len(image_bytes) > 0:
+            try:
+                Image.open(io.BytesIO(image_bytes)) # Validate image
+                logger.info(f"EditImage (quote): Quoted image (MD5: {md5}) validated. Proceeding with {task_type}.")
+
+                key_to_clear = self.get_waiting_key(message) # Get key before async calls
+
+                if is_edit_task:
+                    await self.handle_edit_image_openai(image_bytes, bot, message, user_prompt)
+                elif is_inpaint_task:
+                    await self.handle_inpaint_image_with_gemini(image_bytes, bot, message, user_prompt)
+
+                # Clear any pending states for this user/group to avoid conflicts
+                if key_to_clear in self.waiting_edit_image:
+                    self.waiting_edit_image.pop(key_to_clear, None)
+                    logger.info(f"EditImage (quote): Cleared pending edit state for key: {key_to_clear}")
+                if key_to_clear in self.waiting_inpaint_image:
+                    self.waiting_inpaint_image.pop(key_to_clear, None)
+                    logger.info(f"EditImage (quote): Cleared pending inpaint state for key: {key_to_clear}")
+                
+                if current_msg_id: self.image_msgid_cache.add(current_msg_id)
+                return False # Handled
+            except Exception as e:
+                logger.error(f"EditImage (quote): Quoted image (MD5: {md5}) processing/validation failed for {task_type}: {e}")
+                reply_content = f"处理引用的图片时出错 ({task_type})，无法完成操作。"
+                if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                else: await bot.send_text_message(message["FromWxid"], reply_content)
+                if current_msg_id: self.image_msgid_cache.add(current_msg_id)
+                return False # Handled (error reported)
+        else:
+            logger.warning(f"EditImage (quote): Failed to get valid image bytes from quote (MD5: {md5}) for {task_type}.")
+            reply_content = "未能从本地获取引用的图片数据，无法进行操作。请确保图片最近已发送过。"
+            if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+            else: await bot.send_text_message(message["FromWxid"], reply_content)
+            if current_msg_id: self.image_msgid_cache.add(current_msg_id)
+            return False # Handled (error reported)
+
+        return True # Fallback, should not be reached if conditions for edit/inpaint were met.
 
     async def handle_edit_image_openai(self, image_bytes, bot, message, prompt): # 重命名原函数
         """调用OpenAI图片编辑API并返回结果"""
