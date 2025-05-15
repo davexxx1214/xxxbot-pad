@@ -6,6 +6,7 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from loguru import logger
 
@@ -543,6 +544,31 @@ async def bot_core():
     # 启动调度器
     scheduler.start()
     logger.success("定时任务已启动")
+
+    # 添加图片文件自动清理任务
+    try:
+        from utils.files_cleanup import FilesCleanup
+
+        # 获取清理天数配置
+        cleanup_days = config.get("XYBot", {}).get("files-cleanup-days", 7)
+
+        if cleanup_days > 0:
+            # 创建清理任务
+            cleanup_task = FilesCleanup.schedule_cleanup(config)
+
+            # 添加到定时任务，每天执行一次
+            scheduler.add_job(
+                cleanup_task,
+                'interval',
+                hours=24,
+                id='files_cleanup',
+                next_run_time=datetime.now() + timedelta(minutes=5)  # 系统启动5分钟后执行第一次清理
+            )
+            logger.success(f"已添加图片文件自动清理任务，清理天数: {cleanup_days}天，每24小时执行一次")
+        else:
+            logger.info("图片文件自动清理功能已禁用 (files-cleanup-days = 0)")
+    except Exception as e:
+        logger.error(f"添加图片文件自动清理任务失败: {e}")
 
     # 加载插件目录下的所有插件
     loaded_plugins = await plugin_manager.load_plugins_from_directory(bot, load_disabled_plugin=False)
