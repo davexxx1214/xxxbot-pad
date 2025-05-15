@@ -338,8 +338,18 @@ class Sum4all(PluginBase):
                 await self.handle_vision_image(image_bytes, bot, message, user_prompt)
             except Exception as e:
                 logger.error(f"Sum4all: 图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
+                reply_content = "图片文件无效或已损坏，识图失败。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], reply_content)
         else:
             logger.warning("Sum4all: 未能获取到有效的图片数据，未识图")
+            reply_content = "无法下载图片，识图失败。"
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], reply_content)
         # 状态清理
         self.waiting_vision.pop(key, None)
         self.image_msgid_cache.add(msg_id)
