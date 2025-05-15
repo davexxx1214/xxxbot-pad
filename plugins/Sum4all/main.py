@@ -124,6 +124,128 @@ class Sum4all(PluginBase):
             return False  # 阻止后续插件处理
         return True  # 允许后续插件处理
 
+    @on_quote_message(priority=31)
+    async def handle_quote_vision(self, bot, message: dict):
+        if not self.enable:
+            return True
+
+        current_msg_id = message.get("MsgId")
+        # Prevent re-processing the same quote message
+        if current_msg_id and current_msg_id in self.image_msgid_cache:
+            logger.info(f"Sum4all (quote): Message ID {current_msg_id} already processed, skipping.")
+            return True
+
+        content = message["Content"].strip()
+        quote_info = message.get("Quote", {})
+
+        # Check if vision_prefix is in the text and the quoted message is an image
+        if not (self.vision_prefix in content and quote_info.get("MsgType") == 3):
+            return True  # Conditions not met, let other handlers try
+
+        logger.info(f"Sum4all: Detected vision prefix in quote message for an image. MsgId: {current_msg_id}")
+
+        # Extract user prompt
+        user_prompt = "请识别这张图片的内容。"  # Default prompt
+        try:
+            idx = content.find(self.vision_prefix)
+            if idx != -1:
+                extracted_prompt = content[idx + len(self.vision_prefix):].strip()
+                if extracted_prompt:
+                    user_prompt = extracted_prompt
+        except Exception as e:
+            logger.warning(f"Sum4all (quote): Error extracting prompt: {e}. Using default.")
+        
+        logger.info(f"Sum4all (quote): User prompt: '{user_prompt}'")
+
+        quoted_xml_content = quote_info.get("Content")
+        quoted_msg_id = quote_info.get("NewMsgId")  # SvrID of the original image message
+        quoted_from_wxid = quote_info.get("FromWxid") # Original sender/group of the image
+
+        if not (quoted_xml_content and quoted_msg_id and quoted_from_wxid):
+            logger.warning(f"Sum4all (quote): Quoted message info incomplete for image download. QuotedMsgId: {quoted_msg_id}, QuotedFromWxid: {quoted_from_wxid}")
+            return True
+
+        image_bytes = b""
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(quoted_xml_content)
+            img_elem = root.find("img")
+            if img_elem is not None:
+                length = int(img_elem.get("length", "0"))
+                logger.info(f"Sum4all (quote): Parsed quoted image XML: length={length}")
+                if length > 0:
+                    chunk_size = 65536
+                    chunks = (length + chunk_size - 1) // chunk_size
+                    logger.info(f"Sum4all (quote): Downloading quoted image {quoted_msg_id} from {quoted_from_wxid}, size: {length}, chunks: {chunks}")
+                    for i in range(chunks):
+                        start_pos = i * chunk_size
+                        try:
+                            chunk = await bot.get_msg_image(quoted_msg_id, quoted_from_wxid, length, start_pos=start_pos)
+                            if chunk:
+                                image_bytes += chunk
+                                logger.debug(f"Sum4all (quote): Chunk {i+1}/{chunks} downloaded, size: {len(chunk)}")
+                            else:
+                                logger.error(f"Sum4all (quote): Chunk {i+1}/{chunks} download failed (empty).")
+                                image_bytes = b""  # Reset if any chunk fails
+                                break
+                        except Exception as e:
+                            logger.error(f"Sum4all (quote): Error downloading chunk {i+1}/{chunks} for {quoted_msg_id}: {e}")
+                            image_bytes = b""  # Reset
+                            break
+                    if image_bytes:
+                        logger.info(f"Sum4all (quote): Quoted image {quoted_msg_id} downloaded successfully, total size: {len(image_bytes)}")
+                else:
+                    logger.warning(f"Sum4all (quote): Quoted image {quoted_msg_id} has zero length in XML.")
+            else:
+                logger.warning(f"Sum4all (quote): No <img> element in quoted XML for {quoted_msg_id}.")
+        except Exception as e:
+            logger.error(f"Sum4all (quote): Failed to parse/download quoted image {quoted_msg_id}: {e}")
+            logger.error(traceback.format_exc())
+            image_bytes = b""
+
+        if image_bytes and len(image_bytes) > 0:
+            try:
+                Image.open(io.BytesIO(image_bytes))  # Validate image
+                logger.info(f"Sum4all (quote): Quoted image {quoted_msg_id} validated, size: {len(image_bytes)}. Proceeding with vision.")
+                
+                await self.handle_vision_image(image_bytes, bot, message, user_prompt)
+
+                key = self.get_waiting_key(message)
+                if key in self.waiting_vision:
+                    logger.info(f"Sum4all (quote): Clearing pending vision state for key: {key}")
+                    self.waiting_vision.pop(key, None)
+                
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                    logger.info(f"Sum4all (quote): Added quote MsgId {current_msg_id} to cache.")
+
+                return False  # Handled, stop further processing
+            except Exception as e:
+                logger.error(f"Sum4all (quote): Quoted image {quoted_msg_id} validation failed: {e}, image_bytes_prefix: {image_bytes[:100]}")
+                reply_content = f"引用的图片解析失败或无效，无法识图。" # Simplified error for user
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], reply_content)
+                # Add current_msg_id to cache even on failure to prevent retrying a bad image
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False 
+        else:
+            logger.warning(f"Sum4all (quote): Failed to get valid image bytes from quote {quoted_msg_id}. Not performing vision.")
+            reply_content = "未能成功获取引用的图片数据，无法识图。"
+            # Only send error if we actually intended to process (i.e., vision_prefix was present)
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], reply_content)
+            # Add current_msg_id to cache to prevent retrying failed download
+            if current_msg_id:
+                self.image_msgid_cache.add(current_msg_id)
+            return False
+
+        return True # Should not be reached if conditions met, but as a fallback
+
     @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
         if not self.enable:
