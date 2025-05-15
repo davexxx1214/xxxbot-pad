@@ -23,6 +23,8 @@ class Sum4all(PluginBase):
 
     def __init__(self):
         super().__init__()
+        self.files_dir = "files" # Define files directory for MD5 lookup
+        os.makedirs(self.files_dir, exist_ok=True)
         try:
             with open("plugins/Sum4all/config.toml", "rb") as f:
                 config = tomllib.load(f)
@@ -42,6 +44,44 @@ class Sum4all(PluginBase):
         self.image_msgid_cache = set()
         self.image_cache_timeout = 60
         self.image_cache = {}
+
+    async def find_image_by_md5(self, md5: str) -> bytes | None:
+        """Finds an image by its MD5 hash in the local files directory."""
+        if not md5:
+            logger.warning("Sum4all: MD5 is empty, cannot find image.")
+            return None
+
+        # Construct the full path to the files directory relative to the current working directory
+        # Assumes XYBot runs from a root where 'files' is a subdirectory.
+        # If files_dir is absolute, os.path.join behaves correctly.
+        # For robustness, ensure files_dir is treated as relative to CWD if not absolute.
+        # However, simple self.files_dir might be enough if CWD is consistently the workspace root.
+        # Using os.path.join(os.getcwd(), self.files_dir) is safer if CWD can vary.
+        # For now, let's assume self.files_dir is correctly relative or absolute as needed.
+        # The log suggests /root/xxxbot-pad/files/, so direct path might be fine.
+
+        common_extensions = ["jpeg", "jpg", "png", "gif", "webp"]
+        for ext in common_extensions:
+            # Path construction: The log shows an absolute path. 
+            # If self.files_dir is "files", it will be relative to CWD.
+            # To match "/root/xxxbot-pad/files/", self.files_dir would need to be absolute
+            # or CWD must be /root/xxxbot-pad.
+            # Let's try a direct relative path first, then consider getcwd if issues persist.
+            # The user log example path is /root/xxxbot-pad/files/MD5.jpeg
+            # This implies that just using self.files_dir for the md5 lookup should be relative to wherever the bot is running.
+            # Or, more simply, the file paths are usually relative to the workspace root.
+            file_path = os.path.join(self.files_dir, f"{md5}.{ext}")
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as f:
+                        image_data = f.read()
+                    logger.info(f"Sum4all: Found image by MD5: {file_path}, size: {len(image_data)} bytes")
+                    return image_data
+                except Exception as e:
+                    logger.error(f"Sum4all: Failed to read image file {file_path} by MD5: {e}")
+                    return None # Error reading file
+        logger.warning(f"Sum4all: Image file with MD5 {md5} not found in {self.files_dir} with common extensions.")
+        return None
 
     def is_at_message(self, message: dict) -> bool:
         if not message.get("IsGroup"):
@@ -158,55 +198,42 @@ class Sum4all(PluginBase):
         logger.info(f"Sum4all (quote): User prompt: '{user_prompt}'")
 
         quoted_xml_content = quote_info.get("Content")
-        quoted_msg_id = quote_info.get("NewMsgId")  # SvrID of the original image message
-        quoted_from_wxid = quote_info.get("FromWxid") # Original sender/group of the image
+        # quoted_msg_id_for_download = quote_info.get("NewMsgId") # ServerID - problematic for download
+        # quoted_from_wxid = quote_info.get("FromWxid") # Original sender/group of the image
 
-        if not (quoted_xml_content and quoted_msg_id and quoted_from_wxid):
-            logger.warning(f"Sum4all (quote): Quoted message info incomplete for image download. QuotedMsgId: {quoted_msg_id}, QuotedFromWxid: {quoted_from_wxid}")
+        if not quoted_xml_content:
+            logger.warning(f"Sum4all (quote): Quoted message XML content is missing.")
             return True
 
         image_bytes = b""
+        md5 = None
         import xml.etree.ElementTree as ET
         try:
             root = ET.fromstring(quoted_xml_content)
             img_elem = root.find("img")
             if img_elem is not None:
-                length = int(img_elem.get("length", "0"))
-                logger.info(f"Sum4all (quote): Parsed quoted image XML: length={length}")
-                if length > 0:
-                    chunk_size = 65536
-                    chunks = (length + chunk_size - 1) // chunk_size
-                    logger.info(f"Sum4all (quote): Downloading quoted image {quoted_msg_id} from {quoted_from_wxid}, size: {length}, chunks: {chunks}")
-                    for i in range(chunks):
-                        start_pos = i * chunk_size
-                        try:
-                            chunk = await bot.get_msg_image(quoted_msg_id, quoted_from_wxid, length, start_pos=start_pos)
-                            if chunk:
-                                image_bytes += chunk
-                                logger.debug(f"Sum4all (quote): Chunk {i+1}/{chunks} downloaded, size: {len(chunk)}")
-                            else:
-                                logger.error(f"Sum4all (quote): Chunk {i+1}/{chunks} download failed (empty).")
-                                image_bytes = b""  # Reset if any chunk fails
-                                break
-                        except Exception as e:
-                            logger.error(f"Sum4all (quote): Error downloading chunk {i+1}/{chunks} for {quoted_msg_id}: {e}")
-                            image_bytes = b""  # Reset
-                            break
+                md5 = img_elem.get("md5")
+                length_str = img_elem.get("length", "0") # Get length for logging if needed
+                logger.info(f"Sum4all (quote): Parsed quoted image XML: md5={md5}, length={length_str}")
+                if md5:
+                    image_bytes = await self.find_image_by_md5(md5)
                     if image_bytes:
-                        logger.info(f"Sum4all (quote): Quoted image {quoted_msg_id} downloaded successfully, total size: {len(image_bytes)}")
+                        logger.info(f"Sum4all (quote): Image found locally by MD5: {md5}, size: {len(image_bytes)}")
+                    else:
+                        logger.warning(f"Sum4all (quote): Image with MD5 {md5} not found locally. Cannot perform vision.")
                 else:
-                    logger.warning(f"Sum4all (quote): Quoted image {quoted_msg_id} has zero length in XML.")
+                    logger.warning(f"Sum4all (quote): MD5 not found in quoted image XML.")
             else:
-                logger.warning(f"Sum4all (quote): No <img> element in quoted XML for {quoted_msg_id}.")
+                logger.warning(f"Sum4all (quote): No <img> element in quoted XML.")
         except Exception as e:
-            logger.error(f"Sum4all (quote): Failed to parse/download quoted image {quoted_msg_id}: {e}")
+            logger.error(f"Sum4all (quote): Failed to parse quoted image XML or find by MD5: {e}")
             logger.error(traceback.format_exc())
-            image_bytes = b""
+            image_bytes = b"" # Ensure image_bytes is empty on error
 
         if image_bytes and len(image_bytes) > 0:
             try:
                 Image.open(io.BytesIO(image_bytes))  # Validate image
-                logger.info(f"Sum4all (quote): Quoted image {quoted_msg_id} validated, size: {len(image_bytes)}. Proceeding with vision.")
+                logger.info(f"Sum4all (quote): Quoted image (MD5: {md5}) validated, size: {len(image_bytes)}. Proceeding with vision.")
                 
                 await self.handle_vision_image(image_bytes, bot, message, user_prompt)
 
@@ -221,30 +248,29 @@ class Sum4all(PluginBase):
 
                 return False  # Handled, stop further processing
             except Exception as e:
-                logger.error(f"Sum4all (quote): Quoted image {quoted_msg_id} validation failed: {e}, image_bytes_prefix: {image_bytes[:100]}")
-                reply_content = f"引用的图片解析失败或无效，无法识图。" # Simplified error for user
+                logger.error(f"Sum4all (quote): Quoted image (MD5: {md5}) validation failed: {e}, image_bytes_prefix: {image_bytes[:100]}")
+                reply_content = f"引用的图片解析失败或无效，无法识图。" 
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], reply_content)
-                # Add current_msg_id to cache even on failure to prevent retrying a bad image
                 if current_msg_id:
                     self.image_msgid_cache.add(current_msg_id)
                 return False 
         else:
-            logger.warning(f"Sum4all (quote): Failed to get valid image bytes from quote {quoted_msg_id}. Not performing vision.")
-            reply_content = "未能成功获取引用的图片数据，无法识图。"
-            # Only send error if we actually intended to process (i.e., vision_prefix was present)
+            # This block is reached if image_bytes is empty (not found by MD5 or other errors)
+            logger.warning(f"Sum4all (quote): Failed to get valid image bytes from quote (MD5: {md5}). Not performing vision.")
+            reply_content = "未能从本地缓存中获取引用的图片数据，无法识图。请确保图片最近发送过。"
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], reply_content)
-            # Add current_msg_id to cache to prevent retrying failed download
             if current_msg_id:
                 self.image_msgid_cache.add(current_msg_id)
-            return False
+            return False # Stop processing, as we intended to handle it but failed.
 
-        return True # Should not be reached if conditions met, but as a fallback
+        # Fallback, should ideally not be reached if logic is correct for quote + vision_prefix
+        return True 
 
     @on_image_message(priority=30)
     async def handle_image(self, bot, message: dict):
