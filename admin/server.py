@@ -1121,14 +1121,14 @@ def setup_routes():
     # 导入并注册切换账号相关路由
     try:
         # 使用绝对导入
-        from switch_account_api import register_switch_account_routes
+        from .switch_account_api import register_switch_account_routes
 
         # 然后注册路由，传入check_auth函数和更新机器人状态的函数
         register_switch_account_routes(app, check_auth, update_bot_status)
         logger.info("切换账号API路由注册成功")
 
         # 导入并注册系统配置API路由
-        from system_config_api import router as system_config_router
+        from .system_config_api import router as system_config_router
         app.include_router(system_config_router)
         logger.info("系统配置API路由注册成功")
     except Exception as e:
@@ -1138,7 +1138,7 @@ def setup_routes():
 
     # 导入并注册重启系统路由
     try:
-        from restart_api import register_restart_routes, restart_system
+        from .restart_api import register_restart_routes, restart_system
         register_restart_routes(app, check_auth)
         logger.info("重启系统API路由注册成功")
     except Exception as e:
@@ -1148,7 +1148,7 @@ def setup_routes():
 
     # 导入并注册账号管理路由
     try:
-        from account_manager import register_account_manager_routes
+        from .account_manager import register_account_manager_routes
         register_account_manager_routes(app, check_auth, update_bot_status, restart_system)
         logger.info("账号管理API路由注册成功")
 

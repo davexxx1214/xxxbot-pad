@@ -89,6 +89,9 @@ timezone = "Asia/Shanghai"             # 时区设置，中国用户使用 Asia/
 # 实验性功能，如果main_config.toml配置改动，或者plugins文件夹有改动，自动重启。可以在开发时使用，不建议在生产环境使用。
 auto-restart = false                 # 仅建议在开发时启用，生产环境保持false
 
+# 图片文件自动清理设置
+files-cleanup-days = 7               # 图片文件保存天数，超过此天数的图片将被自动清理，设为0表示禁用自动清理
+
 # 自动重启监控器设置
 [AutoRestart]
 enabled = true                      # 是否启用自动重启监控器

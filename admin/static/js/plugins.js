@@ -1589,6 +1589,10 @@ function renderMarketPlugins(marketPluginsList) {
                             <i class="bi bi-person me-1"></i>${plugin.author}
                         </div>
                         <div class="d-flex justify-content-end">
+                            ${plugin.github_url ? `
+                            <a href="${plugin.github_url}" target="_blank" class="btn btn-sm btn-outline-secondary rounded-pill me-2" title="访问GitHub仓库">
+                                <i class="bi bi-github me-1"></i>GitHub
+                            </a>` : ''}
                             <button class="btn ${isInstalled ? (hasUpdate ? 'btn-outline-warning' : 'btn-outline-primary') : 'btn-primary'} btn-sm rounded-pill btn-install-plugin" data-plugin-index="${index}">
                                 <i class="bi ${isInstalled ? (hasUpdate ? 'bi-arrow-up-circle' : 'bi-arrow-repeat') : 'bi-download'} me-1"></i>${isInstalled ? (hasUpdate ? '更新' : '重新安装') : '安装'}
                             </button>
