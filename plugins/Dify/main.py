@@ -265,33 +265,41 @@ class Dify(PluginBase):
             context_key = f"group_{message['FromWxid']}"
         else:
             context_key = f"private_{message['FromWxid']}"
+        
+        # --- 关键的调试打印 --- logger.info(f"Dify method: Received query parameter: '{query}'")
+
         # 维护问题历史，只存最近3条
         history = self._question_history.get(context_key, [])
-        history.append(query)
+        history.append(query) # query 应该是清理过的，例如 "你好"
         if len(history) > 3:
             history = history[-3:]
         self._question_history[context_key] = history
+
+        # --- 再次确认 history[-1] --- logger.info(f"Dify method: history[-1] before assembling prompt: '{history[-1]}'")
+
         # 组装内容
+        prompt_prefix = ''
         if len(history) > 1:
             prev_questions = history[:-1]
             prev_str = ' '.join([f"{i+1}. {q}" for i, q in enumerate(prev_questions)])
-            prompt = f"用户之前作为参考的对话：\n{prev_str}\n"
-        else:
-            prompt = ''
-        prompt += f"回答用户最新的问题：\n{history[-1]}\n"
-        # 只传组装后的内容给dify
+            prompt_prefix = f"用户之前作为参考的对话：\n{prev_str}\n"
+        
+        final_prompt_for_api = f"{prompt_prefix}回答用户最新的问题：\n{history[-1]}\n" # history[-1] 应该是纯净的 "你好"
+
+        # --- 打印将要发送的 prompt --- logger.info(f"Dify method: Final prompt for API: '{final_prompt_for_api}'")
+
         headers = {"Authorization": f"Bearer {self.default_model_api_key}", "Content-Type": "application/json"}
         payload = {
             "inputs": {},
-            "query": prompt,
+            "query": final_prompt_for_api, # 使用这个最终构建的 prompt
             "response_mode": "streaming",
-            "user": message["FromWxid"],
+            "user": message["FromWxid"], # For Dify: this is the end-user identifier
             "auto_generate_name": False,
         }
-        ai_resp = ""
-        # Add logging for the payload sent to Dify
-        logger.info(f"Dify Plugin: Payload sent to Dify API: {json.dumps(payload, ensure_ascii=False)}")
+        # 这条日志现在应该能准确反映 final_prompt_for_api 的内容
+        logger.info(f"Dify Plugin: Payload sent to Dify API (re-check): {json.dumps(payload, ensure_ascii=False)}")
 
+        ai_resp = ""
         try:
             async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
                 async with session.post(url=f"{self.default_model_base_url}/chat-messages", headers=headers, data=json.dumps(payload)) as resp:
