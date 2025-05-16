@@ -12,6 +12,7 @@ import traceback
 from PIL import Image
 import base64
 from utils.decorators import on_text_message, on_at_message, on_quote_message
+import regex
 
 # 只保留必要的常量
 DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
@@ -54,16 +55,15 @@ class Dify(PluginBase):
             logger.error(f"加载Dify插件配置文件失败: {e}")
             raise
 
-    @staticmethod
-    def is_at_message(message: dict, robot_names=None) -> bool:
+    def is_at_message(self, message: dict) -> bool:
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
-        logger.info(f"is_at_message: content repr={repr(content)} robot_names={robot_names}")
-        if robot_names:
-            for robot_name in robot_names:
-                # 匹配@名字后可以有任意空白字符
-                if re.match(f"^@{robot_name}[\\s\\u2005\\u2002\\u2003\\u3000]*", content):
+        content = regex.sub(r"^[^@\n]+:\s*\n", "", content)
+        logger.info(f"Dify is_at_message: content repr={repr(content)} robot_names={self.robot_names}")
+        if self.robot_names:
+            for robot_name in self.robot_names:
+                if regex.match(f"^@{robot_name}[\p{{Zs}}\s]*", content):
                     return True
         return False
 
@@ -171,7 +171,7 @@ class Dify(PluginBase):
         if not self.enable:
             return
         # 只在群聊且@了机器人时才处理
-        if message.get("IsGroup") and not self.is_at_message(message, self.robot_names):
+        if message.get("IsGroup") and not self.is_at_message(message):
             return False
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
