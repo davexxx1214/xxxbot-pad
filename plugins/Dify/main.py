@@ -194,6 +194,7 @@ class Dify(PluginBase):
             return False # Handled "画" command
 
         # 4. If not "画" and final_query is not empty, send to Dify
+        logger.info(f"Dify Plugin handle_text: Final query BEFORE calling self.dify: '{final_query}'")
         await self.dify(bot, message, final_query)
         return False # Indicate message handled by Dify
 
@@ -222,7 +223,8 @@ class Dify(PluginBase):
             else:
                 await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
             return False  # Indicate message handled
-
+        
+        logger.info(f"Dify Plugin handle_at: Actual query BEFORE calling self.dify: '{actual_query}'")
         await self.dify(bot, message, actual_query) # Pass the fully cleaned query
         return False # Indicate message handled
 
@@ -345,23 +347,11 @@ class Dify(PluginBase):
                 if paragraph.strip():
                     if message.get("IsGroup"):
                         user_to_at_wxid = message["SenderWxid"]
-                        # 尝试获取用户昵称，如果机器人框架支持的话
-                        # user_nickname_to_at = await bot.get_user_nickname(user_to_at_wxid, message["FromWxid"]) 
-                        # 如果上面获取昵称的方法不可用或复杂，我们先用固定的 wxid 作为占位符
-                        # text_to_send = f"@{user_to_at_wxid} \n{paragraph.strip()}" # 手动构建@
-                        
-                        # 更简单的测试：直接发送，不@任何人，看看内容本身是什么
-                        logger.info(f"Dify Plugin DEBUG: About to send to group (via send_text_message for test): '\n{paragraph.strip()}'")
-                        await bot.send_text_message(
-                            message["FromWxid"], # 群ID
-                            "\n" + paragraph.strip() # Dify返回的文本
+                        # 恢复使用 bot.send_at_message
+                        await bot.send_at_message(
+                            message["FromWxid"],
+                            "\n" + paragraph.strip(),
+                            [user_to_at_wxid] 
                         )
-                        
-                        # 原来的调用，我们先注释掉来测试
-                        # await bot.send_at_message(
-                        #     message["FromWxid"],
-                        #     "\n" + paragraph.strip(),
-                        #     [user_to_at_wxid] 
-                        # )
                     else:
                         await bot.send_text_message(message["FromWxid"], paragraph.strip())
