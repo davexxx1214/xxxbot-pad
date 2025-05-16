@@ -289,6 +289,9 @@ class Dify(PluginBase):
             "auto_generate_name": False,
         }
         ai_resp = ""
+        # Add logging for the payload sent to Dify
+        logger.info(f"Dify Plugin: Payload sent to Dify API: {json.dumps(payload, ensure_ascii=False)}")
+
         try:
             async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
                 async with session.post(url=f"{self.default_model_base_url}/chat-messages", headers=headers, data=json.dumps(payload)) as resp:
@@ -305,9 +308,14 @@ class Dify(PluginBase):
                                 continue
                             event = resp_json.get("event", "")
                             if event == "message":
-                                ai_resp += resp_json.get("answer", "")
+                                answer_chunk = resp_json.get("answer", "")
+                                # Add logging for raw answer chunk from Dify
+                                logger.info(f"Dify Plugin: Raw answer chunk from Dify (event=message): {answer_chunk}")
+                                ai_resp += answer_chunk
                             elif event == "message_replace":
                                 ai_resp = resp_json.get("answer", "")
+                                # Add logging for raw answer from Dify for message_replace
+                                logger.info(f"Dify Plugin: Raw answer from Dify (event=message_replace): {ai_resp}")
                             elif event == "message_end":
                                 pass
                     else:
