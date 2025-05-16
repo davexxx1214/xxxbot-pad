@@ -133,13 +133,18 @@ class Dify(PluginBase):
     async def handle_text(self, bot, message: dict):
         if not self.enable:
             return
-        content = message["Content"].strip()
-        content = content.lstrip()  # 去除前导空白
-        if not content:
+
+        raw_content = message["Content"]
+        # Remove "Nick:\n" prefix if present (common in group chats)
+        # For private chats, this sub call won't change the string.
+        processed_content = regex.sub(r"^[^@\n]+:\s*\n", "", raw_content).strip()
+
+        if not processed_content: # If content is empty after stripping
             return
+
         # 群聊和私聊都直接判断是否以'画'开头
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[len("画"):].strip()
+        if processed_content.startswith("画") and self.image_generation_enabled:
+            prompt = processed_content[len("画"):].strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -147,24 +152,39 @@ class Dify(PluginBase):
                     await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return
-        await self.dify(bot, message, content)
+            return # Handled "画" command
+
+        await self.dify(bot, message, processed_content)
+        return False # Indicate message handled by dify
 
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
         if not self.enable:
             return
-        content = message["Content"].strip()
-        content = content.lstrip()  # 去除前导空白
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[len("画"):].strip()
+
+        raw_content = message["Content"]
+        # 1. Remove "Nick:\n" prefix
+        processed_content = regex.sub(r"^[^@\n]+:\s*\n", "", raw_content).strip()
+
+        # 2. Remove "@BotName " prefix from the remaining content
+        actual_query = processed_content
+        for robot_name in self.robot_names:
+            match = regex.match(f"^@{robot_name}[\p{{Zs}}\s]*", actual_query)
+            if match:
+                actual_query = actual_query[match.end():].strip()
+                break
+        
+        # Now use actual_query for logic
+        if actual_query.startswith("画") and self.image_generation_enabled:
+            prompt = actual_query[len("画"):].strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
                 await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
-            return False
-        await self.dify(bot, message, content)
-        return False
+            return False  # Indicate message handled
+
+        await self.dify(bot, message, actual_query) # Pass the fully cleaned query
+        return False # Indicate message handled
 
     @on_quote_message(priority=20)
     async def handle_quote(self, bot, message: dict):
@@ -173,14 +193,30 @@ class Dify(PluginBase):
         # 只在群聊且@了机器人时才处理
         if message.get("IsGroup") and not self.is_at_message(message):
             return False
-        content = message["Content"].strip()
+
+        raw_content = message["Content"] # This is the text part of the quote message
+
+        # 1. Remove "Nick:\n" prefix
+        processed_content = regex.sub(r"^[^@\n]+:\s*\n", "", raw_content).strip()
+
+        # 2. Remove "@BotName " prefix
+        actual_text_part = processed_content
+        for robot_name in self.robot_names:
+            match = regex.match(f"^@{robot_name}[\p{{Zs}}\s]*", actual_text_part)
+            if match:
+                actual_text_part = actual_text_part[match.end():].strip()
+                break
+
         quote_info = message.get("Quote", {})
         quoted_content = quote_info.get("Content", "")
-        if not content:
-            query = f"请回复这条消息: '{quoted_content}'"
+
+        query_for_dify = ""
+        if not actual_text_part: # If the text part after @BotName is empty
+            query_for_dify = f"请回复这条消息: '{quoted_content}'"
         else:
-            query = f"{content} (引用消息: '{quoted_content}')"
-        await self.dify(bot, message, query)
+            query_for_dify = f"{actual_text_part} (引用消息: '{quoted_content}')"
+        
+        await self.dify(bot, message, query_for_dify)
         return False
 
     async def dify(self, bot, message: dict, query: str):
