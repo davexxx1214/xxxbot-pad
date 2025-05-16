@@ -132,30 +132,70 @@ class Dify(PluginBase):
     @on_text_message(priority=20)
     async def handle_text(self, bot, message: dict):
         if not self.enable:
-            return
+            return True # Allow other plugins if Dify is disabled
 
         raw_content = message["Content"]
-        # Remove "Nick:\n" prefix if present (common in group chats)
-        # For private chats, this sub call won't change the string.
-        processed_content = regex.sub(r"^[^@\n]+:\s*\n", "", raw_content).strip()
+        # 1. Remove "Nick:\\n" prefix
+        content_after_nick_strip = regex.sub(r"^[^@\\n]+:\\s*\\n", "", raw_content).strip()
 
-        if not processed_content: # If content is empty after stripping
-            return
+        if not content_after_nick_strip:
+            return True # Empty after nick stripping, let others handle
 
-        # 群聊和私聊都直接判断是否以'画'开头
-        if processed_content.startswith("画") and self.image_generation_enabled:
-            prompt = processed_content[len("画"):].strip()
+        # 2. Attempt to remove "@BotName " prefix from content_after_nick_strip.
+        # This makes handle_text more robust for messages that are effectively @-mentions
+        # but might be routed as text messages by the core dispatcher.
+        final_query = content_after_nick_strip
+        was_explicit_at_mention_processed = False # Flag to see if we stripped a known bot name
+
+        if content_after_nick_strip.startswith("@"): # Optimization: only loop if it starts with @
+            for robot_name in self.robot_names:
+                match = regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content_after_nick_strip)
+                if match:
+                    final_query = content_after_nick_strip[match.end():].strip()
+                    was_explicit_at_mention_processed = True
+                    break
+        
+        # Scenario: User message was "@BotName" or "@BotName 画" which became empty after stripping.
+        if was_explicit_at_mention_processed and not final_query:
+            # Check if original command (before stripping @BotName) was just "画"
+            original_command_after_at = ""
+            if content_after_nick_strip.startswith("@"):
+                 for robot_name in self.robot_names: # Re-evaluate to get the part after @BotName
+                    match = regex.match(f"^@{robot_name}[\\p{{Zs}}\\s]*", content_after_nick_strip)
+                    if match:
+                        original_command_after_at = content_after_nick_strip[match.end():].strip()
+                        break
+            
+            if original_command_after_at == "画": # User typed "@BotName 画"
+                 if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], "\\n请输入绘画内容。", [message["SenderWxid"]])
+                 else:
+                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
+                 return False # Handled: empty "画" command after @BotName
+
+            # If it was just "@BotName" (and not "@BotName 画"), then final_query is empty.
+            # Don't send to Dify. Let other plugins handle or ignore.
+            return True
+
+        # If final_query is empty here, it means original content_after_nick_strip was empty.
+        if not final_query:
+            return True
+
+        # 3. Process "画" command with the (potentially further cleaned) final_query
+        if final_query.startswith("画") and self.image_generation_enabled:
+            prompt = final_query[len("画"):].strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
-            else:
+            else: # "画" or "画 " (or if "@BotName 画" was handled above, this is for "画" alone)
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
+                    await bot.send_at_message(message["FromWxid"], "\\n请输入绘画内容。", [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return # Handled "画" command
+            return False # Handled "画" command
 
-        await self.dify(bot, message, processed_content)
-        return False # Indicate message handled by dify
+        # 4. If not "画" and final_query is not empty, send to Dify
+        await self.dify(bot, message, final_query)
+        return False # Indicate message handled by Dify
 
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
