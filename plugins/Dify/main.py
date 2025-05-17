@@ -206,13 +206,23 @@ class Dify(PluginBase):
         if not self.enable:
             return
         content = message["Content"].strip()
+        # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
+        content = re.sub(r"^[^@\n]+:\s*\n", "", content)
         content = content.lstrip()  # 去除前导空白
         if content.startswith("画") and self.image_generation_enabled:
             prompt = content[len("画"):].strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
-                await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
+                at_wxid = message.get("SenderWxid")
+                if self.self_wxid is None and hasattr(bot, "wxid"):
+                    self.self_wxid = bot.wxid
+                if at_wxid == self.self_wxid or not at_wxid:
+                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                if at_wxid and at_wxid != self.self_wxid:
+                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
+                else:
+                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
             return False
         await self.dify(bot, message, content)
         return False
