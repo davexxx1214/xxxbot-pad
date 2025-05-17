@@ -74,13 +74,29 @@ class Dify(PluginBase):
         if not self.image_generation_enabled or not self.openai_image_api_key:
             err_msg = "OpenAI画图功能未配置API密钥或未启用，请联系管理员。"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [message["SenderWxid"]])
+                at_wxid = message.get("SenderWxid")
+                if self.self_wxid is None and hasattr(bot, "wxid"):
+                    self.self_wxid = bot.wxid
+                if at_wxid == self.self_wxid or not at_wxid:
+                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                if at_wxid and at_wxid != self.self_wxid:
+                    await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
+                else:
+                    await bot.send_text_message(message["FromWxid"], err_msg)
             else:
                 await bot.send_text_message(message["FromWxid"], err_msg)
             return
         start_message = f"🎨 正在使用 {self.image_model} 为您绘画，请稍候...\n提示词：{prompt}"
         if message["IsGroup"]:
-            await bot.send_at_message(message["FromWxid"], f"\n{start_message}", [message["SenderWxid"]])
+            at_wxid = message.get("SenderWxid")
+            if self.self_wxid is None and hasattr(bot, "wxid"):
+                self.self_wxid = bot.wxid
+            if at_wxid == self.self_wxid or not at_wxid:
+                at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+            if at_wxid and at_wxid != self.self_wxid:
+                await bot.send_at_message(message["FromWxid"], f"\n{start_message}", [at_wxid])
+            else:
+                await bot.send_text_message(message["FromWxid"], start_message)
         else:
             await bot.send_text_message(message["FromWxid"], start_message)
         headers = {
@@ -110,25 +126,57 @@ class Dify(PluginBase):
                             image_bytes = base64.b64decode(image_b64)
                             await bot.send_image_message(message["FromWxid"], image_bytes)
                             if message["IsGroup"]:
-                                await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [message["SenderWxid"]])
+                                at_wxid = message.get("SenderWxid")
+                                if self.self_wxid is None and hasattr(bot, "wxid"):
+                                    self.self_wxid = bot.wxid
+                                if at_wxid == self.self_wxid or not at_wxid:
+                                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                                if at_wxid and at_wxid != self.self_wxid:
+                                    await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [at_wxid])
+                                else:
+                                    await bot.send_text_message(message["FromWxid"], "🖼️ 您的图像已生成！")
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
-                                await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [message["SenderWxid"]])
+                                at_wxid = message.get("SenderWxid")
+                                if self.self_wxid is None and hasattr(bot, "wxid"):
+                                    self.self_wxid = bot.wxid
+                                if at_wxid == self.self_wxid or not at_wxid:
+                                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                                if at_wxid and at_wxid != self.self_wxid:
+                                    await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
+                                else:
+                                    await bot.send_text_message(message["FromWxid"], err_msg)
                             else:
                                 await bot.send_text_message(message["FromWxid"], err_msg)
                     else:
                         error_text = await resp.text()
                         err_msg = "画图失败，请稍后再试。"
                         if message["IsGroup"]:
-                            await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [message["SenderWxid"]])
+                            at_wxid = message.get("SenderWxid")
+                            if self.self_wxid is None and hasattr(bot, "wxid"):
+                                self.self_wxid = bot.wxid
+                            if at_wxid == self.self_wxid or not at_wxid:
+                                at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                            if at_wxid and at_wxid != self.self_wxid:
+                                await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
+                            else:
+                                await bot.send_text_message(message["FromWxid"], err_msg)
                         else:
                             await bot.send_text_message(message["FromWxid"], err_msg)
         except Exception as e:
             logger.error(f"OpenAI画图失败: {e}")
             err_msg = "画图遇到未知错误，请联系管理员。"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [message["SenderWxid"]])
+                at_wxid = message.get("SenderWxid")
+                if self.self_wxid is None and hasattr(bot, "wxid"):
+                    self.self_wxid = bot.wxid
+                if at_wxid == self.self_wxid or not at_wxid:
+                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                if at_wxid and at_wxid != self.self_wxid:
+                    await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
+                else:
+                    await bot.send_text_message(message["FromWxid"], err_msg)
             else:
                 await bot.send_text_message(message["FromWxid"], err_msg)
 
