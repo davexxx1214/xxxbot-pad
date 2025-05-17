@@ -154,27 +154,6 @@ class Dify(PluginBase):
             else:
                 await bot.send_text_message(message["FromWxid"], err_msg)
 
-    @on_text_message(priority=20)
-    async def handle_text(self, bot, message: dict):
-        if not self.enable:
-            return
-        content = message["Content"].strip()
-        content = content.lstrip()  # 去除前导空白
-        if not content:
-            return
-        # 群聊和私聊都直接判断是否以'画'开头
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[len("画"):].strip()
-            if prompt:
-                await self.generate_openai_image(bot, message, prompt)
-            else:
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return
-        await self.dify(bot, message, content)
-
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
         if not self.enable:
