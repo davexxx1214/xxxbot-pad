@@ -133,8 +133,6 @@ class Dify(PluginBase):
                                     at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                                 if at_wxid and at_wxid != self.self_wxid:
                                     await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [at_wxid])
-                                else:
-                                    await bot.send_text_message(message["FromWxid"], "🖼️ 您的图像已生成！")
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
