@@ -253,12 +253,14 @@ class Dify(PluginBase):
             paragraphs = text.split("//n")
             for paragraph in paragraphs:
                 if paragraph.strip():
-                    if message.get("IsGroup"):
-                        # 群聊中@发消息的人
+                    at_wxid = message.get("SenderWxid")
+                    if at_wxid == self.self_wxid or not at_wxid:
+                        at_wxid = message.get("ActualUserName") or message.get("from_user_id")
+                    if at_wxid and at_wxid != self.self_wxid:
                         await bot.send_at_message(
                             message["FromWxid"],
                             "\n" + paragraph.strip(),
-                            [message["SenderWxid"]]
+                            [at_wxid]
                         )
                     else:
                         await bot.send_text_message(message["FromWxid"], paragraph.strip())
