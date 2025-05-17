@@ -75,10 +75,6 @@ class Dify(PluginBase):
             err_msg = "OpenAI画图功能未配置API密钥或未启用，请联系管理员。"
             if message["IsGroup"]:
                 at_wxid = message.get("SenderWxid")
-                if self.self_wxid is None and hasattr(bot, "wxid"):
-                    self.self_wxid = bot.wxid
-                if at_wxid == self.self_wxid or not at_wxid:
-                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                 if at_wxid and at_wxid != self.self_wxid:
                     await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
                 else:
@@ -89,10 +85,6 @@ class Dify(PluginBase):
         start_message = f"🎨 正在使用 {self.image_model} 为您绘画，请稍候...\n提示词：{prompt}"
         if message["IsGroup"]:
             at_wxid = message.get("SenderWxid")
-            if self.self_wxid is None and hasattr(bot, "wxid"):
-                self.self_wxid = bot.wxid
-            if at_wxid == self.self_wxid or not at_wxid:
-                at_wxid = message.get("ActualUserName") or message.get("from_user_id")
             if at_wxid and at_wxid != self.self_wxid:
                 await bot.send_at_message(message["FromWxid"], f"\n{start_message}", [at_wxid])
             else:
@@ -127,20 +119,12 @@ class Dify(PluginBase):
                             await bot.send_image_message(message["FromWxid"], image_bytes)
                             if message["IsGroup"]:
                                 at_wxid = message.get("SenderWxid")
-                                if self.self_wxid is None and hasattr(bot, "wxid"):
-                                    self.self_wxid = bot.wxid
-                                if at_wxid == self.self_wxid or not at_wxid:
-                                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                                 if at_wxid and at_wxid != self.self_wxid:
                                     await bot.send_at_message(message["FromWxid"], "\n🖼️ 您的图像已生成！", [at_wxid])
                         else:
                             err_msg = "画图失败：API响应格式不正确。"
                             if message["IsGroup"]:
                                 at_wxid = message.get("SenderWxid")
-                                if self.self_wxid is None and hasattr(bot, "wxid"):
-                                    self.self_wxid = bot.wxid
-                                if at_wxid == self.self_wxid or not at_wxid:
-                                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                                 if at_wxid and at_wxid != self.self_wxid:
                                     await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
                                 else:
@@ -152,10 +136,6 @@ class Dify(PluginBase):
                         err_msg = "画图失败，请稍后再试。"
                         if message["IsGroup"]:
                             at_wxid = message.get("SenderWxid")
-                            if self.self_wxid is None and hasattr(bot, "wxid"):
-                                self.self_wxid = bot.wxid
-                            if at_wxid == self.self_wxid or not at_wxid:
-                                at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                             if at_wxid and at_wxid != self.self_wxid:
                                 await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
                             else:
@@ -167,10 +147,6 @@ class Dify(PluginBase):
             err_msg = "画图遇到未知错误，请联系管理员。"
             if message["IsGroup"]:
                 at_wxid = message.get("SenderWxid")
-                if self.self_wxid is None and hasattr(bot, "wxid"):
-                    self.self_wxid = bot.wxid
-                if at_wxid == self.self_wxid or not at_wxid:
-                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                 if at_wxid and at_wxid != self.self_wxid:
                     await bot.send_at_message(message["FromWxid"], f"\n{err_msg}", [at_wxid])
                 else:
@@ -213,10 +189,6 @@ class Dify(PluginBase):
                 await self.generate_openai_image(bot, message, prompt)
             else:
                 at_wxid = message.get("SenderWxid")
-                if self.self_wxid is None and hasattr(bot, "wxid"):
-                    self.self_wxid = bot.wxid
-                if at_wxid == self.self_wxid or not at_wxid:
-                    at_wxid = message.get("ActualUserName") or message.get("from_user_id")
                 if at_wxid and at_wxid != self.self_wxid:
                     await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
                 else:
@@ -305,7 +277,6 @@ class Dify(PluginBase):
             await bot.send_text_message(message["FromWxid"], f"Dify API 调用失败: {e}")
 
     async def dify_handle_text(self, bot, message: dict, text: str):
-        # 自动获取并缓存机器人自身wxid
         if self.self_wxid is None and hasattr(bot, "wxid"):
             self.self_wxid = bot.wxid
         # 只发送文字内容
@@ -313,14 +284,15 @@ class Dify(PluginBase):
             paragraphs = text.split("//n")
             for paragraph in paragraphs:
                 if paragraph.strip():
-                    at_wxid = message.get("SenderWxid")
-                    if at_wxid == self.self_wxid or not at_wxid:
-                        at_wxid = message.get("ActualUserName") or message.get("from_user_id")
-                    if at_wxid and at_wxid != self.self_wxid:
-                        await bot.send_at_message(
-                            message["FromWxid"],
-                            "\n" + paragraph.strip(),
-                            [at_wxid]
-                        )
+                    if message.get("IsGroup"):
+                        at_wxid = message.get("SenderWxid")
+                        if at_wxid and at_wxid != self.self_wxid:
+                            await bot.send_at_message(
+                                message["FromWxid"],
+                                "\n" + paragraph.strip(),
+                                [at_wxid]
+                            )
+                        else:
+                            await bot.send_text_message(message["FromWxid"], paragraph.strip())
                     else:
                         await bot.send_text_message(message["FromWxid"], paragraph.strip())
