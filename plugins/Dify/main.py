@@ -25,6 +25,7 @@ class Dify(PluginBase):
 
     def __init__(self):
         super().__init__()
+        self.self_wxid = None
         # 新增：本地会话ID存储dict
         self._conversation_ids = {}
         # 新增：本地问题历史存储dict
@@ -248,6 +249,9 @@ class Dify(PluginBase):
             await bot.send_text_message(message["FromWxid"], f"Dify API 调用失败: {e}")
 
     async def dify_handle_text(self, bot, message: dict, text: str):
+        # 自动获取并缓存机器人自身wxid
+        if self.self_wxid is None and hasattr(bot, "wxid"):
+            self.self_wxid = bot.wxid
         # 只发送文字内容
         if text:
             paragraphs = text.split("//n")
