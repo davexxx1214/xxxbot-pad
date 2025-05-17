@@ -59,6 +59,8 @@ class Dify(PluginBase):
         if not message.get("IsGroup"):
             return False
         content = message.get("Content", "")
+        # 新增：去掉"昵称: 换行"前缀，防止误判
+        content = re.sub(r"^[^@\n]+:\s*\n", "", content)
         logger.info(f"is_at_message: content repr={repr(content)} robot_names={robot_names}")
         if robot_names:
             for robot_name in robot_names:
