@@ -154,14 +154,16 @@ class Dify(PluginBase):
             else:
                 await bot.send_text_message(message["FromWxid"], err_msg)
 
-    @on_at_message(priority=20)
-    async def handle_at(self, bot, message: dict):
+    @on_text_message(priority=20)
+    async def handle_text(self, bot, message: dict):
         if not self.enable:
             return
         content = message["Content"].strip()
+        content = content.lstrip()  # 去除前导空白
+        if not content:
+            return
         # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
         content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        content = content.lstrip()  # 去除前导空白
         if content.startswith("画") and self.image_generation_enabled:
             prompt = content[len("画"):].strip()
             if prompt:
@@ -172,9 +174,8 @@ class Dify(PluginBase):
                     await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
                 else:
                     await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return False
+            return
         await self.dify(bot, message, content)
-        return False
 
     @on_quote_message(priority=20)
     async def handle_quote(self, bot, message: dict):
