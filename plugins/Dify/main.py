@@ -65,8 +65,10 @@ class Dify(PluginBase):
         logger.info(f"is_at_message: content repr={repr(content)} robot_names={robot_names}")
         if robot_names:
             for robot_name in robot_names:
-                # 匹配@名字后可以有任意空白字符
-                if re.match(f"^@{robot_name}[\\s\\u2005\\u2002\\u2003\\u3000]*", content):
+                # 去除所有空白符再比对
+                content_no_space = re.sub(r"\s+|\u2005|\u2002|\u2003|\u3000", "", content)
+                robot_name_no_space = re.sub(r"\s+|\u2005|\u2002|\u2003|\u3000", "", robot_name)
+                if content_no_space.startswith(f"@{robot_name_no_space}"):
                     return True
         return False
 
