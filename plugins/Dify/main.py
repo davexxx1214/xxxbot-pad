@@ -68,7 +68,7 @@ class Dify(PluginBase):
                 # 去除所有空白符再比对
                 content_no_space = re.sub(r"\s+|\u2005|\u2002|\u2003|\u3000", "", content)
                 robot_name_no_space = re.sub(r"\s+|\u2005|\u2002|\u2003|\u3000", "", robot_name)
-                if content_no_space.startswith(f"@{robot_name_no_space}"):
+                if f"@{robot_name_no_space}" in content_no_space:
                     return True
         return False
 
