@@ -196,6 +196,11 @@ class Dify(PluginBase):
         await self.dify(bot, message, query)
         return False
 
+    @on_at_message(priority=20)
+    async def handle_at(self, bot, message: dict):
+        # 复用 handle_text 的逻辑
+        await self.handle_text(bot, message)
+
     async def dify(self, bot, message: dict, query: str):
         # 新实现：群聊用群ID，私聊用用户ID，整个群为单位存储
         if message.get("IsGroup"):
