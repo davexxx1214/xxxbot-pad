@@ -570,7 +570,7 @@ class XYBot:
 
                     # 如果没有唤醒词或唤醒词处理返回继续，则使用默认的at_message事件
                     if not wakeup_handled:
-                        logger.debug("未检测到唤醒词，使用默认的at_message事件处理")
+                        logger.debug(f"[分发] at_message: MsgId={message.get('MsgId')} FromWxid={message['FromWxid']} SenderWxid={message['SenderWxid']} Ats={message['Ats']} Content={message['Content']}")
                         await EventManager.emit("at_message", self.bot, message)
                 else:
                     logger.warning("风控保护: 新设备登录后4小时内请挂机")
@@ -587,6 +587,7 @@ class XYBot:
         # 无论是否@机器人，都处理消息
         if should_process and self.ignore_check(message["FromWxid"], message["SenderWxid"]):
             if self.ignore_protection or not protector.check(14400):
+                logger.debug(f"[分发] text_message: MsgId={message.get('MsgId')} FromWxid={message['FromWxid']} SenderWxid={message['SenderWxid']} Ats={message['Ats']} Content={message['Content']}")
                 await EventManager.emit("text_message", self.bot, message)
             else:
                 logger.warning("风控保护: 新设备登录后4小时内请挂机")
