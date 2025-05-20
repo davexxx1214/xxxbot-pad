@@ -158,7 +158,11 @@ class Dify(PluginBase):
 
     @on_text_message(priority=20)
     async def handle_text(self, bot, message: dict):
+        logger.info(f"[Dify.handle_text] 收到消息: {message}")
         if not self.enable:
+            return
+        # 新增：如果是群聊且@了机器人，则不在这里处理，交给handle_at
+        if message.get("IsGroup") and self.is_at_message(message, self.robot_names):
             return
         content = message["Content"].strip()
         content = content.lstrip()  # 去除前导空白
@@ -181,6 +185,7 @@ class Dify(PluginBase):
 
     @on_at_message(priority=20)
     async def handle_at(self, bot, message: dict):
+        logger.info(f"[Dify.handle_at] 收到消息: {message}")
         if not self.enable:
             return
         content = message["Content"].strip()
@@ -218,8 +223,6 @@ class Dify(PluginBase):
             query = f"{content} (引用消息: '{quoted_content}')"
         await self.dify(bot, message, query)
         return False
-
-
 
     async def dify(self, bot, message: dict, query: str):
         # 新实现：群聊用群ID，私聊用用户ID，整个群为单位存储
