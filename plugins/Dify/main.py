@@ -179,6 +179,29 @@ class Dify(PluginBase):
             return
         await self.dify(bot, message, content)
 
+    @on_at_message(priority=20)
+    async def handle_at(self, bot, message: dict):
+        if not self.enable:
+            return
+        content = message["Content"].strip()
+        content = content.lstrip()  # 去除前导空白
+        if not content:
+            return
+        # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
+        content = re.sub(r"^[^@\n]+:\s*\n", "", content)
+        if content.startswith("画") and self.image_generation_enabled:
+            prompt = content[len("画"):].strip()
+            if prompt:
+                await self.generate_openai_image(bot, message, prompt)
+            else:
+                at_wxid = message.get("SenderWxid")
+                if at_wxid and at_wxid != self.self_wxid:
+                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
+                else:
+                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
+            return
+        await self.dify(bot, message, content)
+
     @on_quote_message(priority=20)
     async def handle_quote(self, bot, message: dict):
         if not self.enable:
@@ -196,10 +219,7 @@ class Dify(PluginBase):
         await self.dify(bot, message, query)
         return False
 
-    @on_at_message(priority=20)
-    async def handle_at(self, bot, message: dict):
-        # 复用 handle_text 的逻辑
-        await self.handle_text(bot, message)
+
 
     async def dify(self, bot, message: dict, query: str):
         # 新实现：群聊用群ID，私聊用用户ID，整个群为单位存储
