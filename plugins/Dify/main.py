@@ -204,8 +204,9 @@ class Dify(PluginBase):
                     await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
                 else:
                     await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return
+            return False
         await self.dify(bot, message, content)
+        return False
 
     @on_quote_message(priority=20)
     async def handle_quote(self, bot, message: dict):
