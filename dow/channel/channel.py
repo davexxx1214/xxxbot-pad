@@ -2,9 +2,10 @@
 Message sending channel abstract class
 """
 
-from bridge.bridge import Bridge
-from bridge.context import Context
-from bridge.reply import *
+from dow.bridge.bridge import Bridge
+from dow.common.log import logger
+from dow.bridge.reply import *
+from dow.bridge.context import Context # Added for type hinting
 
 
 class Channel(object):
