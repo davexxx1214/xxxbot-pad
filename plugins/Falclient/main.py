@@ -205,34 +205,42 @@ class Falclient(PluginBase):
             logger.error(f"Falclient: 文生视频API调用异常: {e}\n{traceback.format_exc()}")
             await self.send_video_url(bot, message, f"API调用异常: {e}")
 
-    def gen_cover_base64(self):
-        # 生成320x180的白色PNG图片
-        img = Image.new('RGB', (320, 180), color=(255, 255, 255))
-        buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode()
-        return "data:image/png;base64," + b64
-
     def _generate_cover_image_file(self) -> str:
         tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
         os.makedirs(tmp_dir, exist_ok=True)
-        cover_filename = f"cover_{uuid.uuid4().hex}.png"
+        cover_filename = f"cover_{uuid.uuid4().hex}.jpg"  # 改为jpg格式
         cover_path = os.path.join(tmp_dir, cover_filename)
 
-        img = Image.new('RGB', (320, 180), color=(255, 255, 255))
+        # 使用常见的视频封面尺寸 16:9
+        img = Image.new('RGB', (640, 360), color=(255, 255, 255))  # 改为更标准的尺寸
         draw = ImageDraw.Draw(img)
-        for _ in range(5):
-            x1, y1 = random.randint(0, 320), random.randint(0, 180)
-            x2, y2 = random.randint(0, 320), random.randint(0, 180)
-            draw.line((x1, y1, x2, y2), fill=(random.randint(0,255),random.randint(0,255),random.randint(0,255)), width=3)
-        try:
-            font = ImageFont.truetype("arial.ttf", 24)
-        except IOError: # More specific exception
-            font = None # Use default font if arial.ttf is not found
-        draw.text((10, 70), "视频封面", fill=(0,0,0), font=font) # Adjusted y-position for text
         
-        img.save(cover_path, format='PNG')
+        # 简化绘制，只画一个简单的矩形框
+        draw.rectangle([10, 10, 630, 350], outline=(100, 100, 100), width=2)
+        
+        try:
+            # 尝试使用系统字体
+            import platform
+            if platform.system() == "Windows":
+                font = ImageFont.truetype("arial.ttf", 36)
+            elif platform.system() == "Linux":
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+            else:
+                font = ImageFont.load_default()
+        except (IOError, OSError):
+            font = ImageFont.load_default()
+        
+        # 居中绘制文字
+        text = "视频封面"
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = (640 - text_width) // 2
+        y = (360 - text_height) // 2
+        draw.text((x, y), text, fill=(0, 0, 0), font=font)
+        
+        # 保存为JPEG格式，质量设为95
+        img.save(cover_path, format='JPEG', quality=95)
         logger.info(f"临时封面已生成: {cover_path}")
         return cover_path
 
@@ -292,15 +300,53 @@ class Falclient(PluginBase):
                             else:
                                 raise Exception(f"视频下载失败，状态码: {resp.status}")
                     
-                    # 生成自定义封面图片
-                    cover_path = self._generate_cover_image_file()
-                    logger.info(f"使用自定义生成的封面: {cover_path}")
-
-                    if message.get("IsGroup"):
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_path))
-                        await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
-                    else:
-                        await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_path))
+                    # 尝试几种不同的发送方式
+                    send_success = False
+                    
+                    # 方案1：使用自定义封面
+                    try:
+                        cover_path = self._generate_cover_image_file()
+                        logger.info(f"[img2video] 方案1：使用自定义生成的封面: {cover_path}")
+                        if message.get("IsGroup"):
+                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_path))
+                            await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                        else:
+                            await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_path))
+                        send_success = True
+                        logger.info("[img2video] 方案1发送成功")
+                    except Exception as e1:
+                        logger.warning(f"[img2video] 方案1发送失败: {e1}")
+                        
+                        # 方案2：不使用封面 
+                        try:
+                            logger.info("[img2video] 方案2：不使用封面，传入None")
+                            if message.get("IsGroup"):
+                                await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=None)
+                                await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                            else:
+                                await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=None)
+                            send_success = True
+                            logger.info("[img2video] 方案2发送成功")
+                        except Exception as e2:
+                            logger.warning(f"[img2video] 方案2发送失败: {e2}")
+                            
+                            # 方案3：尝试不传image参数
+                            try:
+                                logger.info("[img2video] 方案3：不传image参数")
+                                if message.get("IsGroup"):
+                                    await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                                    await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                                else:
+                                    await bot.send_video_message(message["FromWxid"], Path(video_tmp_path))
+                                send_success = True
+                                logger.info("[img2video] 方案3发送成功")
+                            except Exception as e3:
+                                logger.error(f"[img2video] 方案3也发送失败: {e3}")
+                                # 所有方案都失败了，抛出最后一个异常
+                                raise e3
+                                
+                    if not send_success:
+                        raise Exception("所有发送方案都失败了")
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
                     if message.get("IsGroup"):
@@ -363,15 +409,54 @@ class Falclient(PluginBase):
                     else:
                         raise Exception(f"视频下载失败，状态码: {resp.status}")
 
-            # 生成自定义封面图片
-            cover_path = self._generate_cover_image_file()
-            logger.info(f"使用自定义生成的封面: {cover_path}")
-
-            if message.get("IsGroup"):
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(cover_path))
-                await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
-            else:
-                await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(cover_path))
+            # 尝试几种不同的发送方式
+            send_success = False
+            
+            # 方案1：使用自定义封面
+            try:
+                cover_path = self._generate_cover_image_file()
+                logger.info(f"[img2video] 方案1：使用自定义生成的封面: {cover_path}")
+                if message.get("IsGroup"):
+                    await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(cover_path))
+                    await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                else:
+                    await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(cover_path))
+                send_success = True
+                logger.info("[img2video] 方案1发送成功")
+            except Exception as e1:
+                logger.warning(f"[img2video] 方案1发送失败: {e1}")
+                
+                # 方案2：不使用封面 
+                try:
+                    logger.info("[img2video] 方案2：不使用封面，传入None")
+                    if message.get("IsGroup"):
+                        await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=None)
+                        await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                    else:
+                        await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=None)
+                    send_success = True
+                    logger.info("[img2video] 方案2发送成功")
+                except Exception as e2:
+                    logger.warning(f"[img2video] 方案2发送失败: {e2}")
+                    
+                    # 方案3：尝试不传image参数
+                    try:
+                        logger.info("[img2video] 方案3：不传image参数")
+                        if message.get("IsGroup"):
+                            await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                            await bot.send_at_message(message["FromWxid"], "视频已生成，点击上方播放。", [message["SenderWxid"]])
+                        else:
+                            await bot.send_video_message(message["FromWxid"], Path(tmp_file_path))
+                        send_success = True
+                        logger.info("[img2video] 方案3发送成功")
+                    except Exception as e3:
+                        logger.error(f"[img2video] 方案3也发送失败: {e3}")
+                        # 所有方案都失败了，抛出最后一个异常
+                        raise e3
+                        
+            if not send_success:
+                raise Exception("所有发送方案都失败了")
+                
         except Exception as e:
             logger.error(f"Falclient: 视频下载或发送失败: {e}")
             if message.get("IsGroup"):
