@@ -60,6 +60,21 @@ class Falclient(PluginBase):
             self.has_mediainfo = False
             if self.debug_mode:
                 logger.warning("pymediainfo未安装，视频时长将使用默认值。建议安装: pip install pymediainfo")
+        
+        # 检查ffmpeg可用性
+        if self.extract_video_frame:
+            try:
+                import subprocess
+                result = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+                self.has_ffmpeg = result.returncode == 0
+                if self.has_ffmpeg and self.debug_mode:
+                    logger.info("ffmpeg可用，将从视频中提取第一帧作为封面")
+            except:
+                self.has_ffmpeg = False
+                if self.debug_mode:
+                    logger.warning("ffmpeg不可用，将使用默认生成的封面。建议安装ffmpeg以获得更好的封面效果")
+        else:
+            self.has_ffmpeg = False
 
     def get_waiting_key(self, message: dict):
         if message.get("IsGroup"):
@@ -240,6 +255,47 @@ class Falclient(PluginBase):
             logger.error(f"Falclient: 文生视频API调用异常: {e}\n{traceback.format_exc()}")
             await self.send_video_url(bot, message, f"API调用异常: {e}", prompt)
 
+    def _get_video_cover(self, video_path) -> str:
+        """智能获取视频封面，默认尝试提取视频帧，失败时使用默认封面"""
+        try:
+            return self._extract_video_frame_as_cover(video_path)
+        except Exception as e:
+            if self.debug_mode:
+                logger.warning(f"视频帧提取失败，使用默认封面: {e}")
+            return self._generate_cover_image_file()
+
+    def _extract_video_frame_as_cover(self, video_path) -> str:
+        """从视频文件中提取第一帧作为封面"""
+        import subprocess
+        
+        tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        cover_filename = f"frame_cover_{uuid.uuid4().hex}.jpg"
+        cover_path = os.path.join(tmp_dir, cover_filename)
+        
+        # 使用ffmpeg提取视频第一帧
+        cmd = [
+            'ffmpeg', '-i', video_path, 
+            '-vf', 'scale=640:360',  # 缩放到标准尺寸
+            '-vframes', '1',         # 只提取1帧
+            '-q:v', '2',             # 高质量
+            '-y',                    # 覆盖输出文件
+            cover_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0 and os.path.exists(cover_path):
+            if self.debug_mode:
+                logger.info(f"视频帧封面提取成功: {cover_path}")
+            return cover_path
+        else:
+            if self.debug_mode:
+                logger.warning(f"ffmpeg提取失败: {result.stderr}")
+            # 失败时抛出异常，让上层方法处理
+            raise Exception(f"ffmpeg提取失败: {result.stderr}")
+
     def _generate_cover_image_file(self) -> str:
         tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
         os.makedirs(tmp_dir, exist_ok=True)
@@ -400,7 +456,7 @@ class Falclient(PluginBase):
                     
                     # 方案0：使用自定义发送逻辑（避开微信API的bug）
                     try:
-                        cover_path = self._generate_cover_image_file()
+                        cover_path = self._get_video_cover(video_tmp_path)
                         logger.info(f"方案0：使用自定义发送逻辑，封面: {cover_path}")
                         await self.send_video_with_custom_logic(bot, message["FromWxid"], video_tmp_path, cover_path)
                         send_success = True
@@ -415,7 +471,7 @@ class Falclient(PluginBase):
                         # 方案1：使用自定义封面
                         try:
                             if not cover_path:  # 如果方案0没有生成封面
-                                cover_path = self._generate_cover_image_file()
+                                cover_path = self._get_video_cover(video_tmp_path)
                             logger.info(f"方案1：使用自定义生成的封面: {cover_path}")
                             if message.get("IsGroup"):
                                 await bot.send_video_message(message["FromWxid"], Path(video_tmp_path), image=Path(cover_path))
@@ -534,12 +590,33 @@ class Falclient(PluginBase):
                 diagnosis = self.diagnose_video_file(tmp_file_path)
                 logger.info(f"视频文件诊断:\n{diagnosis}")
 
+            # 获取视频时长，使用默认5秒避免MediaInfo问题
+            duration_ms = 5000  # 默认5秒，毫秒
+            if self.has_mediainfo:
+                try:
+                    from pymediainfo import MediaInfo
+                    media_info = MediaInfo.parse(tmp_file_path)
+                    if media_info.tracks:
+                        track_duration = media_info.tracks[0].duration
+                        if track_duration and track_duration > 0:
+                            duration_ms = track_duration
+                            if duration_ms > 60000:  # 如果超过60秒，设为5秒
+                                duration_ms = 5000
+                except Exception as e:
+                    logger.warning(f"获取视频时长失败，使用默认值: {e}")
+            
+            # 转换为秒（微信API需要秒为单位）
+            duration_seconds = int(duration_ms / 1000)
+            
+            if self.debug_mode:
+                logger.info(f"时长信息: 原始={duration_ms}ms, 转换后={duration_seconds}秒")
+
             # 尝试几种不同的发送方式
             send_success = False
             
             # 方案0：使用自定义发送逻辑（避开微信API的bug）
             try:
-                cover_path = self._generate_cover_image_file()
+                cover_path = self._get_video_cover(tmp_file_path)
                 logger.info(f"方案0：使用自定义发送逻辑，封面: {cover_path}")
                 await self.send_video_with_custom_logic(bot, message["FromWxid"], tmp_file_path, cover_path)
                 send_success = True
@@ -554,7 +631,7 @@ class Falclient(PluginBase):
                 # 方案1：使用自定义封面
                 try:
                     if not cover_path:  # 如果方案0没有生成封面
-                        cover_path = self._generate_cover_image_file()
+                        cover_path = self._get_video_cover(tmp_file_path)
                     logger.info(f"方案1：使用自定义生成的封面: {cover_path}")
                     if message.get("IsGroup"):
                         await bot.send_video_message(message["FromWxid"], Path(tmp_file_path), image=Path(cover_path))
@@ -649,7 +726,7 @@ class Falclient(PluginBase):
             image_base64 = base64.b64encode(image_data).decode()
             
             # 获取视频时长，使用默认5秒避免MediaInfo问题
-            duration = 5000  # 默认5秒，毫秒
+            duration_ms = 5000  # 默认5秒，毫秒
             if self.has_mediainfo:
                 try:
                     from pymediainfo import MediaInfo
@@ -657,11 +734,17 @@ class Falclient(PluginBase):
                     if media_info.tracks:
                         track_duration = media_info.tracks[0].duration
                         if track_duration and track_duration > 0:
-                            duration = track_duration
-                            if duration > 60000:  # 如果超过60秒，设为5秒
-                                duration = 5000
+                            duration_ms = track_duration
+                            if duration_ms > 60000:  # 如果超过60秒，设为5秒
+                                duration_ms = 5000
                 except Exception as e:
                     logger.warning(f"获取视频时长失败，使用默认值: {e}")
+            
+            # 转换为秒（微信API需要秒为单位）
+            duration_seconds = int(duration_ms / 1000)
+            
+            if self.debug_mode:
+                logger.info(f"时长信息: 原始={duration_ms}ms, 转换后={duration_seconds}秒")
             
             # 直接调用微信API，使用正确的格式
             json_param = {
@@ -669,12 +752,12 @@ class Falclient(PluginBase):
                 "ToWxid": wxid, 
                 "Base64": f"data:video/mp4;base64,{video_base64}",  # 添加前缀
                 "ImageBase64": f"data:image/jpeg;base64,{image_base64}",  # 添加前缀
-                "PlayLength": duration
+                "PlayLength": duration_seconds  # 使用秒为单位
             }
             
             file_size = len(video_data)
             predict_time = int(file_size / 1024 / 300)
-            logger.info(f"自定义发送视频: 对方wxid:{wxid} 文件大小:{file_size}字节 预计耗时:{predict_time}秒")
+            logger.info(f"自定义发送视频: 对方wxid:{wxid} 文件大小:{file_size}字节 预计耗时:{predict_time}秒 视频时长:{duration_seconds}秒")
             
             # 尝试多个可能的API端点
             possible_endpoints = [
@@ -704,7 +787,7 @@ class Falclient(PluginBase):
                                 continue
                     
                     if json_resp.get("Success"):
-                        logger.info(f"自定义视频发送成功: 对方wxid:{wxid} 时长:{duration}ms, 使用端点: {api_url}")
+                        logger.info(f"自定义视频发送成功: 对方wxid:{wxid} 时长:{duration_seconds}秒, 使用端点: {api_url}")
                         data = json_resp.get("Data", {})
                         success = True
                         return data.get("clientMsgId"), data.get("newMsgId")
