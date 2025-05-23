@@ -39,7 +39,7 @@ class Falclient(PluginBase):
             self.fal_kling_text_model = plugin_config.get("fal_kling_text_model", "kling-video/v2/master/text-to-video")
             self.fal_api_key = plugin_config.get("fal_api_key", None)
             
-            # 新增配置选项
+            # 配置选项
             self.debug_mode = plugin_config.get("debug_mode", True)
         except Exception as e:
             logger.error(f"加载Falclient插件配置文件失败: {e}")
@@ -58,12 +58,38 @@ class Falclient(PluginBase):
         self.image_msgid_cache = set()
         self.image_cache_timeout = 60
         self.image_cache = {}
+        
+        # 文件目录，用于MD5查找
+        self.files_dir = "files"
+        os.makedirs(self.files_dir, exist_ok=True)
 
     def get_waiting_key(self, message: dict):
         if message.get("IsGroup"):
             return message["FromWxid"]
         else:
             return message["SenderWxid"]
+
+    async def find_image_by_md5(self, md5: str) -> bytes | None:
+        """通过MD5在本地文件目录中查找图片"""
+        if not md5:
+            logger.warning("Falclient: MD5为空，无法查找图片")
+            return None
+        
+        common_extensions = ["jpeg", "jpg", "png", "gif", "webp"]
+        for ext in common_extensions:
+            file_path = os.path.join(self.files_dir, f"{md5}.{ext}")
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "rb") as f:
+                        image_data = f.read()
+                    logger.info(f"Falclient: 通过MD5找到图片: {file_path}, 大小: {len(image_data)} 字节")
+                    return image_data
+                except Exception as e:
+                    logger.error(f"Falclient: 读取图片文件失败 {file_path}: {e}")
+                    return None
+        
+        logger.warning(f"Falclient: 未找到MD5为 {md5} 的图片文件")
+        return None
 
     @on_text_message(priority=30)
     async def handle_text(self, bot, message: dict):
@@ -211,6 +237,141 @@ class Falclient(PluginBase):
         self.waiting_video.pop(key, None)
         self.image_msgid_cache.add(msg_id)
         return False
+
+    @on_quote_message(priority=31)
+    async def handle_quote_img2video(self, bot, message: dict):
+        """处理引用图片进行图生视频"""
+        if not self.enable:
+            return True
+
+        current_msg_id = message.get("MsgId")
+        if current_msg_id and current_msg_id in self.image_msgid_cache:
+            logger.info(f"Falclient (quote): 消息ID {current_msg_id} 已处理，跳过")
+            return True
+
+        content = message["Content"].strip()
+        quote_info = message.get("Quote", {})
+
+        # 必须是引用图片消息
+        if not (quote_info.get("MsgType") == 3):
+            return True
+
+        # 检查是否包含图生视频前缀
+        is_img2video_task = self.fal_img_prefix in content
+        is_text2video_task = self.fal_text_prefix in content
+
+        if not (is_img2video_task or is_text2video_task):
+            return True
+
+        logger.info(f"Falclient (quote): 检测到引用图片的视频生成请求，MsgId: {current_msg_id}")
+
+        # 处理文生视频（引用图片但使用文生视频指令）
+        if is_text2video_task:
+            idx = content.find(self.fal_text_prefix)
+            user_prompt = content[idx + len(self.fal_text_prefix):].strip()
+            if not user_prompt:
+                tip = "请在文生视频指令后添加描述文字"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False
+            
+            # 直接进行文生视频，忽略引用的图片
+            notice = "您的文生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
+            
+            await self.handle_text2video(bot, message, user_prompt)
+            if current_msg_id:
+                self.image_msgid_cache.add(current_msg_id)
+            return False
+
+        # 处理图生视频
+        if is_img2video_task:
+            idx = content.find(self.fal_img_prefix)
+            user_prompt = content[idx + len(self.fal_img_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "生成视频"
+
+            logger.info(f"Falclient (quote): 图生视频任务，提示词: '{user_prompt}'")
+
+            # 从引用的XML中提取图片
+            quoted_xml_content = quote_info.get("Content")
+            if not quoted_xml_content:
+                logger.warning(f"Falclient (quote): 引用消息缺少XML内容，MsgId: {current_msg_id}")
+                return True
+
+            image_bytes = b""
+            md5 = None
+            import xml.etree.ElementTree as ET
+            try:
+                root = ET.fromstring(quoted_xml_content)
+                img_elem = root.find("img")
+                if img_elem is not None:
+                    md5 = img_elem.get("md5")
+                    length_str = img_elem.get("length", "0")
+                    logger.info(f"Falclient (quote): 解析引用图片XML: md5={md5}, length={length_str}")
+                    
+                    if md5:
+                        image_bytes = await self.find_image_by_md5(md5)
+                        if image_bytes:
+                            logger.info(f"Falclient (quote): 通过MD5找到图片: {md5}, 大小: {len(image_bytes)} 字节")
+                        else:
+                            logger.warning(f"Falclient (quote): 未找到MD5为 {md5} 的图片")
+                    else:
+                        logger.warning(f"Falclient (quote): 引用图片XML中未找到MD5")
+                else:
+                    logger.warning(f"Falclient (quote): 引用XML中没有<img>元素，MsgId: {current_msg_id}")
+            except Exception as e:
+                logger.error(f"Falclient (quote): 解析引用XML或查找图片失败，MsgId: {current_msg_id}: {e}")
+                image_bytes = b""
+
+            if image_bytes and len(image_bytes) > 0:
+                try:
+                    # 验证图片
+                    from PIL import Image
+                    Image.open(io.BytesIO(image_bytes))
+                    logger.info(f"Falclient (quote): 引用图片 (MD5: {md5}) 验证通过，开始图生视频")
+
+                    # 清除可能存在的等待状态
+                    key_to_clear = self.get_waiting_key(message)
+                    if key_to_clear in self.waiting_video:
+                        self.waiting_video.pop(key_to_clear, None)
+                        logger.info(f"Falclient (quote): 清除用户 {key_to_clear} 的等待状态")
+
+                    # 处理图生视频
+                    await self.handle_img2video(bot, message, image_bytes, user_prompt)
+
+                    if current_msg_id:
+                        self.image_msgid_cache.add(current_msg_id)
+                    return False
+                except Exception as e:
+                    logger.error(f"Falclient (quote): 引用图片 (MD5: {md5}) 处理失败: {e}")
+                    reply_content = f"处理引用的图片时出错，无法完成图生视频操作"
+                    if message["IsGroup"]:
+                        await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], reply_content)
+                    if current_msg_id:
+                        self.image_msgid_cache.add(current_msg_id)
+                    return False
+            else:
+                logger.warning(f"Falclient (quote): 未能从引用获取有效图片数据 (MD5: {md5})")
+                reply_content = "未能从本地获取引用的图片数据，无法进行图生视频。请确保图片最近已发送过。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], reply_content)
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False
+
+        return True
 
     async def handle_text2video(self, bot, message, prompt):
         try:
@@ -384,6 +545,14 @@ class Falclient(PluginBase):
         # 图生视频API调用
         import tempfile, os, aiohttp
         logger.info(f"[img2video] bot.send_video_message 实际类型: {type(bot)}，方法: {getattr(bot, 'send_video_message', None)}")
+        
+        # 添加请求已收到的提示
+        notice = "您的图生视频请求已经收到，请稍候..."
+        if message.get("IsGroup"):
+            await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], notice)
+        
         tmp_file_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
