@@ -7,8 +7,23 @@ import os
 import base64
 import aiohttp
 import asyncio
-from common.log import logger
-from bridge.context import ContextType
+import sys
+import time
+
+# 修复导入路径问题
+try:
+    from common.log import logger
+except ImportError:
+    # 如果无法导入common.log，使用标准logging
+    import logging
+    logger = logging.getLogger(__name__)
+
+try:
+    from bridge.context import ContextType
+except ImportError:
+    # 如果无法导入ContextType，创建一个模拟类
+    class ContextType:
+        IMAGE = 'IMAGE'
 
 
 class IOSCompatibilityHandler:

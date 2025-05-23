@@ -481,6 +481,17 @@ class WX849Channel(ChatChannel):
         self.waiting_for_image = ExpiredDict(300)  # 设置5分钟过期，固定值
         # 新增属性，用于记录会话最近图片消息
         self.recent_image_msgs = ExpiredDict(600)  # 设置10分钟过期，固定值
+        # 初始化iOS兼容性处理器
+        try:
+            from .ios_compatibility import IOSCompatibilityHandler
+            self.ios_handler = IOSCompatibilityHandler(self)
+            logger.info("[WX849] iOS兼容性处理器已初始化")
+        except ImportError as e:
+            logger.warning(f"[WX849] 无法导入iOS兼容性处理器: {e}")
+            self.ios_handler = None
+        except Exception as e:
+            logger.error(f"[WX849] 初始化iOS兼容性处理器失败: {e}")
+            self.ios_handler = None
 
     async def _initialize_bot(self):
         """初始化 bot"""
@@ -7318,9 +7329,48 @@ class WX849Channel(ChatChannel):
                 # 获取响应内容
                 result = response.json()
 
-                # 检查响应是否成功
+# 检查响应是否成功
                 if not result.get("Success", False):
-                    logger.error(f"[WX849] 下载图片分段失败: {result.get('Message', '未知错误')}")
+                    error_msg = result.get('Message', '未知错误')
+                    logger.error(f"[WX849] 下载图片分段失败: {error_msg}")
+                    
+                    # 🔧 iOS兼容性检测和处理
+                    if (self.ios_handler and 
+                        (self.ios_handler.is_ios_error(result) or 
+                         '-104' in error_msg or 
+                         'cacheSize do not equal totalLen' in error_msg)):
+                        logger.warning(f"[WX849] 检测到iOS设备-104错误，启用iOS兼容模式")
+                        
+                        # 使用iOS兼容性处理器下载图片
+                        try:
+                            # 创建临时消息对象用于iOS处理器
+                            class SimpleMsg:
+                                def __init__(self, msg_id, data_len=None, group_id=None):
+                                    self.msg_id = msg_id
+                                    self.data_len = data_len
+                                    self.group_id = group_id
+                            
+                            simple_msg = SimpleMsg(msg_id, data_len, group_id)
+                            
+                            # 创建新的事件循环来运行iOS兼容性处理
+                            import asyncio
+                            ios_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(ios_loop)
+                            try:
+                                ios_result = ios_loop.run_until_complete(
+                                    self.ios_handler.download_image_ios_mode(simple_msg, image_path)
+                                )
+                                
+                                if ios_result:
+                                    logger.info(f"[WX849] ✅ iOS兼容模式下载成功: {ios_result}")
+                                    return ios_result
+                                else:
+                                    logger.warning(f"[WX849] ❌ iOS兼容模式下载也失败")
+                            finally:
+                                ios_loop.close()
+                        except Exception as ios_err:
+                            logger.error(f"[WX849] iOS兼容模式执行失败: {ios_err}")
+                    
                     all_chunks_success = False
                     break
 
