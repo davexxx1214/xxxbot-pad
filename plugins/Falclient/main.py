@@ -230,15 +230,15 @@ class Falclient(PluginBase):
                         result = await resp.json()
                         video_url = result.get("video", {}).get("url")
                         if video_url:
-                            await self.send_video_url(bot, message, video_url)
+                            await self.send_video_url(bot, message, video_url, prompt)
                         else:
-                            await self.send_video_url(bot, message, "未获取到视频URL")
+                            await self.send_video_url(bot, message, "未获取到视频URL", prompt)
                     else:
-                        await self.send_video_url(bot, message, f"API请求失败: {resp.status}")
+                        await self.send_video_url(bot, message, f"API请求失败: {resp.status}", prompt)
         except Exception as e:
             import traceback
             logger.error(f"Falclient: 文生视频API调用异常: {e}\n{traceback.format_exc()}")
-            await self.send_video_url(bot, message, f"API调用异常: {e}")
+            await self.send_video_url(bot, message, f"API调用异常: {e}", prompt)
 
     def _generate_cover_image_file(self) -> str:
         tmp_dir = os.path.join(os.path.dirname(__file__), 'tmp')
@@ -354,7 +354,7 @@ class Falclient(PluginBase):
             client = fal_client.SyncClient(key=self.fal_api_key)
             image_url = client.upload_file(tmp_file_path)
             if not image_url:
-                await self.send_video_url(bot, message, "图片上传失败")
+                await self.send_video_url(bot, message, "图片上传失败", prompt)
                 return
 
             # 用SDK的subscribe方法调用
@@ -458,10 +458,14 @@ class Falclient(PluginBase):
                     if not send_success:
                         # 所有视频发送方案都失败了，发送视频链接作为备用方案
                         logger.warning("所有视频发送方案都失败，改为发送视频链接")
+                        
+                        # 尝试发送更友好的链接卡片格式
+                        video_msg = f"🎬 视频生成完成\n\n▶️ 点击查看视频：\n{video_url}\n\n📝 提示词：{prompt}"
+                        
                         if message.get("IsGroup"):
-                            await bot.send_at_message(message["FromWxid"], f"视频生成完成，但发送失败。请点击链接查看：\n{video_url}", [message["SenderWxid"]])
+                            await bot.send_at_message(message["FromWxid"], video_msg, [message["SenderWxid"]])
                         else:
-                            await bot.send_text_message(message["FromWxid"], f"视频生成完成，但发送失败。请点击链接查看：\n{video_url}")
+                            await bot.send_text_message(message["FromWxid"], video_msg)
                         return  # 成功发送链接，不抛出异常
                 except Exception as e:
                     logger.error(f"Falclient: 图生视频下载或发送失败: {e}")
@@ -486,13 +490,13 @@ class Falclient(PluginBase):
                         except Exception as e_rem:
                             logger.warning(f"删除临时封面文件失败: {cover_path}, error: {e_rem}")
             elif video_url:
-                await self.send_video_url(bot, message, video_url)
+                await self.send_video_url(bot, message, video_url, prompt)
             else:
-                await self.send_video_url(bot, message, "未获取到视频URL")
+                await self.send_video_url(bot, message, "未获取到视频URL", prompt)
         except Exception as e:
-            await self.send_video_url(bot, message, f"API调用异常: {e}")
+            await self.send_video_url(bot, message, f"API调用异常: {e}", prompt)
 
-    async def send_video_url(self, bot, message, video_url):
+    async def send_video_url(self, bot, message, video_url, prompt=""):
         # 直接发送视频文件，先下载到本地再发
         logger.info(f"bot.send_video_message 实际类型: {type(bot)}，方法: {getattr(bot, 'send_video_message', None)}")
         if not video_url or not video_url.startswith("http"):
@@ -593,10 +597,14 @@ class Falclient(PluginBase):
             if not send_success:
                 # 所有视频发送方案都失败了，发送视频链接作为备用方案
                 logger.warning("所有视频发送方案都失败，改为发送视频链接")
+                
+                # 尝试发送更友好的链接卡片格式
+                video_msg = f"🎬 视频生成完成\n\n▶️ 点击查看视频：\n{video_url}\n\n📝 提示词：{prompt}"
+                
                 if message.get("IsGroup"):
-                    await bot.send_at_message(message["FromWxid"], f"视频生成完成，但发送失败。请点击链接查看：\n{video_url}", [message["SenderWxid"]])
+                    await bot.send_at_message(message["FromWxid"], video_msg, [message["SenderWxid"]])
                 else:
-                    await bot.send_text_message(message["FromWxid"], f"视频生成完成，但发送失败。请点击链接查看：\n{video_url}")
+                    await bot.send_text_message(message["FromWxid"], video_msg)
                 return  # 成功发送链接，不抛出异常
                 
         except Exception as e:
@@ -655,12 +663,12 @@ class Falclient(PluginBase):
                 except Exception as e:
                     logger.warning(f"获取视频时长失败，使用默认值: {e}")
             
-            # 直接调用微信API
+            # 直接调用微信API，使用正确的格式
             json_param = {
                 "Wxid": bot.wxid,
                 "ToWxid": wxid, 
-                "Base64": video_base64,
-                "ImageBase64": image_base64,
+                "Base64": f"data:video/mp4;base64,{video_base64}",  # 添加前缀
+                "ImageBase64": f"data:image/jpeg;base64,{image_base64}",  # 添加前缀
                 "PlayLength": duration
             }
             
@@ -668,18 +676,51 @@ class Falclient(PluginBase):
             predict_time = int(file_size / 1024 / 300)
             logger.info(f"自定义发送视频: 对方wxid:{wxid} 文件大小:{file_size}字节 预计耗时:{predict_time}秒")
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f'http://{bot.ip}:{bot.port}/SendVideoMsg', 
-                                      json=json_param) as resp:
-                    json_resp = await resp.json()
+            # 尝试多个可能的API端点
+            possible_endpoints = [
+                f'http://{bot.ip}:{bot.port}/api/Msg/SendVideo',    # Client2/Client3
+                f'http://{bot.ip}:{bot.port}/VXAPI/Msg/SendVideo',  # Client (老版本)
+            ]
             
-            if json_resp.get("Success"):
-                logger.info(f"自定义视频发送成功: 对方wxid:{wxid} 时长:{duration}ms")
-                data = json_resp.get("Data", {})
-                return data.get("clientMsgId"), data.get("newMsgId")
-            else:
-                error_msg = json_resp.get("ErrorMsg", "未知错误")
-                raise Exception(f"视频发送失败: {error_msg}")
+            success = False
+            last_error = None
+            
+            for api_url in possible_endpoints:
+                try:
+                    logger.info(f"尝试API端点: {api_url}")
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(api_url, json=json_param) as resp:
+                            if resp.status == 404:
+                                logger.warning(f"端点不存在: {api_url}")
+                                continue
+                            if resp.status != 200:
+                                raise Exception(f"HTTP错误: {resp.status}")
+                            
+                            try:
+                                json_resp = await resp.json()
+                            except:
+                                logger.warning(f"端点返回非JSON: {api_url}")
+                                continue
+                    
+                    if json_resp.get("Success"):
+                        logger.info(f"自定义视频发送成功: 对方wxid:{wxid} 时长:{duration}ms, 使用端点: {api_url}")
+                        data = json_resp.get("Data", {})
+                        success = True
+                        return data.get("clientMsgId"), data.get("newMsgId")
+                    else:
+                        error_msg = json_resp.get("ErrorMsg") or json_resp.get("Message", "未知错误")
+                        last_error = f"API错误: {error_msg}"
+                        logger.warning(f"端点 {api_url} 返回错误: {error_msg}")
+                        
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"端点 {api_url} 请求失败: {e}")
+                    continue
+            
+            # 所有端点都失败了
+            if not success:
+                raise Exception(f"所有API端点都失败，最后错误: {last_error}")
                 
         except Exception as e:
             logger.error(f"自定义视频发送失败: {e}")
