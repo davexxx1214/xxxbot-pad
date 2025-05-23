@@ -63,7 +63,7 @@ class ModelConfig:
 class Dify(PluginBase):
     description = "Dify插件"
     author = "老夏的金库"
-    version = "1.4.3"  # 更新版本号 - 移除聊天室功能
+    version = "1.5.1"  # 更新版本号 - 增加图片引用功能
     is_ai_platform = True  # 标记为 AI 平台插件
 
     def __init__(self):
@@ -269,6 +269,68 @@ class Dify(PluginBase):
 
     # 聊天室相关方法已移除
 
+    async def reset_conversation(self, bot: WechatAPIClient, message: dict, model_config=None):
+        """重置与Dify的对话
+
+        Args:
+            bot: WechatAPIClient实例
+            message: 消息字典
+            model_config: 模型配置（可选）
+
+        Returns:
+            bool: 是否成功重置对话
+        """
+        try:
+            # 使用传入的model_config，如果没有则使用默认模型
+            model = model_config or self.current_model
+
+            # 获取用户ID
+            user_id = message["FromWxid"]
+            if message.get("IsGroup", False):
+                # 群聊消息，使用群聊ID
+                user_id = message["FromWxid"]
+            else:
+                # 私聊消息，使用发送者ID
+                user_id = message["SenderWxid"]
+
+            # 从数据库获取会话ID
+            conversation_id = self.db.get_llm_thread_id(user_id, "dify")
+
+            if not conversation_id:
+                logger.info(f"用户 {user_id} 没有活跃的对话，无需重置")
+                return False
+
+            logger.info(f"准备重置用户 {user_id} 的对话，会话ID: {conversation_id}")
+
+            # 构建API请求
+            url = f"{model.base_url}/conversations/{conversation_id}"
+            headers = {"Authorization": f"Bearer {model.api_key}", "Content-Type": "application/json"}
+            data = {"user": user_id}
+
+            # 发送DELETE请求
+            async with aiohttp.ClientSession() as session:
+                # 正确的方式是在请求时设置代理，而不是在创建会话时
+                proxy = self.http_proxy if self.http_proxy and self.http_proxy.strip() else None
+                async with session.delete(url, headers=headers, json=data, proxy=proxy) as resp:
+                    if resp.status in (200, 201, 204):
+                        result = await resp.json()
+                        if result.get("result") == "success":
+                            # 重置成功，清除数据库中的会话ID
+                            self.db.save_llm_thread_id(user_id, "", "dify")
+                            logger.success(f"成功重置用户 {user_id} 的对话")
+                            return True
+                        else:
+                            logger.error(f"重置对话失败，API返回: {result}")
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"重置对话失败: HTTP {resp.status} - {error_text}")
+
+            return False
+        except Exception as e:
+            logger.error(f"重置对话时发生错误: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
     @on_text_message(priority=20)
     async def handle_text(self, bot: WechatAPIClient, message: dict):
         if not self.enable:
@@ -278,6 +340,42 @@ class Dify(PluginBase):
         command = content.split(" ")[0] if content else ""
 
         await self.check_and_notify_inactive_users(bot)
+
+        # 处理重置对话命令
+        if command == "重置对话":
+            # 获取用户当前使用的模型
+            model = self.get_user_model(message["SenderWxid"])
+
+            # 执行重置对话操作
+            success = await self.reset_conversation(bot, message, model)
+
+            if success:
+                # 重置成功，发送通知
+                if message.get("IsGroup", False):
+                    await bot.send_at_message(
+                        message["FromWxid"],
+                        "\n对话已重置，我已经忘记了之前的对话内容。",
+                        [message["SenderWxid"]]
+                    )
+                else:
+                    await bot.send_text_message(
+                        message["FromWxid"],
+                        "对话已重置，我已经忘记了之前的对话内容。"
+                    )
+            else:
+                # 重置失败，发送通知
+                if message.get("IsGroup", False):
+                    await bot.send_at_message(
+                        message["FromWxid"],
+                        "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                        [message["SenderWxid"]]
+                    )
+                else:
+                    await bot.send_text_message(
+                        message["FromWxid"],
+                        "重置对话失败，可能是因为没有活跃的对话或发生了错误。"
+                    )
+            return
 
         if not message["IsGroup"]:
             # 先检查唤醒词或触发词，获取对应模型
@@ -347,6 +445,30 @@ class Dify(PluginBase):
                             [user_wxid]
                         )
                         return
+
+        # 处理群聊中的重置对话命令
+        if command == "重置对话":
+            # 获取用户当前使用的模型
+            model = self.get_user_model(user_wxid)
+
+            # 执行重置对话操作
+            success = await self.reset_conversation(bot, message, model)
+
+            if success:
+                # 重置成功，发送通知
+                await bot.send_at_message(
+                    group_id,
+                    "\n对话已重置，我已经忘记了之前的对话内容。",
+                    [user_wxid]
+                )
+            else:
+                # 重置失败，发送通知
+                await bot.send_at_message(
+                    group_id,
+                    "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                    [user_wxid]
+                )
+            return
 
         is_at = self.is_at_message(message)
         is_command = command in self.commands
@@ -428,6 +550,8 @@ class Dify(PluginBase):
             if command in self.commands:
                 query = query[len(command):].strip()
             if query:
+                # 获取用户当前使用的模型
+                model = self.get_user_model(message["SenderWxid"])
                 if await self._check_point(bot, message, model):
                     # 检查是否有唤醒词或触发词
                     model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
@@ -442,8 +566,10 @@ class Dify(PluginBase):
             if command in self.commands:
                 query = query[len(command):].strip()
             if query:
-                if await self._check_point(bot, message):
-                    await self.dify(bot, message, query, files=files)
+                # 获取用户当前使用的模型
+                model = self.get_user_model(message["SenderWxid"])
+                if await self._check_point(bot, message, model):
+                    await self.dify(bot, message, query, files=files, specific_model=model)
         return
 
         if content:
@@ -488,7 +614,9 @@ class Dify(PluginBase):
                 if command in self.commands:
                     query = query[len(command):].strip()
                 if query:
-                    if await self._check_point(bot, message):
+                    # 获取用户当前使用的模型
+                    model = self.get_user_model(message["SenderWxid"])
+                    if await self._check_point(bot, message, model):
                         # 检查是否有唤醒词或触发词
                         model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
                         if is_switch:
@@ -520,6 +648,31 @@ class Dify(PluginBase):
 
         content = message["Content"].strip()
         query = content
+
+        # 检查是否是重置对话命令
+        command = content.split(" ")[0] if content else ""
+        if command == "重置对话":
+            # 获取用户当前使用的模型
+            model = self.get_user_model(message["SenderWxid"])
+
+            # 执行重置对话操作
+            success = await self.reset_conversation(bot, message, model)
+
+            if success:
+                # 重置成功，发送通知
+                await bot.send_at_message(
+                    message["FromWxid"],
+                    "\n对话已重置，我已经忘记了之前的对话内容。",
+                    [message["SenderWxid"]]
+                )
+            else:
+                # 重置失败，发送通知
+                await bot.send_at_message(
+                    message["FromWxid"],
+                    "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                    [message["SenderWxid"]]
+                )
+            return
 
         # 检查是否以@开头，如果是，则移除@部分
         if content.startswith('@'):
@@ -1258,8 +1411,10 @@ class Dify(PluginBase):
             if not use_api_proxy:
                 headers = {"Authorization": f"Bearer {model.api_key}", "Content-Type": "application/json"}
                 ai_resp = ""
-                async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                    async with session.post(url=f"{model.base_url}/chat-messages", headers=headers, data=json.dumps(payload)) as resp:
+                async with aiohttp.ClientSession() as session:
+                    # 正确的方式是在请求时设置代理，而不是在创建会话时
+                    proxy = self.http_proxy if self.http_proxy else None
+                    async with session.post(url=f"{model.base_url}/chat-messages", headers=headers, data=json.dumps(payload), proxy=proxy) as resp:
                         if resp.status in (200, 201):
                             async for line in resp.content:
                                 line = line.decode("utf-8").strip()
@@ -1438,8 +1593,10 @@ class Dify(PluginBase):
 
                             # 重新发送请求
                             logger.debug(f"重新发送请求到 Dify - URL: {model.base_url}/chat-messages, 新会话ID: {new_conversation_id}")
-                            async with aiohttp.ClientSession(proxy=self.http_proxy) as new_session:
-                                async with new_session.post(url=f"{model.base_url}/chat-messages", headers=headers, data=json.dumps(payload)) as new_resp:
+                            async with aiohttp.ClientSession() as new_session:
+                                # 正确的方式是在请求时设置代理，而不是在创建会话时
+                                proxy = self.http_proxy if self.http_proxy else None
+                                async with new_session.post(url=f"{model.base_url}/chat-messages", headers=headers, data=json.dumps(payload), proxy=proxy) as new_resp:
                                     if new_resp.status in (200, 201):
                                         # 处理成功响应
                                         logger.info("使用新会话ID的请求成功")
@@ -1506,8 +1663,10 @@ class Dify(PluginBase):
         """
         try:
             logger.info(f"开始下载文件: {url}")
-            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.get(url) as resp:
+            async with aiohttp.ClientSession() as session:
+                # 正确的方式是在请求时设置代理，而不是在创建会话时
+                proxy = self.http_proxy if self.http_proxy else None
+                async with session.get(url, proxy=proxy) as resp:
                     if resp.status == 200:
                         content = await resp.read()
                         logger.info(f"文件下载成功，大小: {len(content)} 字节")
@@ -1706,8 +1865,10 @@ class Dify(PluginBase):
             timeout = aiohttp.ClientTimeout(total=60)  # 60秒超时
 
             try:
-                async with aiohttp.ClientSession(proxy=self.http_proxy, timeout=timeout) as session:
-                    async with session.post(url, headers=headers, data=formdata) as resp:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    # 正确的方式是在请求时设置代理，而不是在创建会话时
+                    proxy = self.http_proxy if self.http_proxy else None
+                    async with session.post(url, headers=headers, data=formdata, proxy=proxy) as resp:
                         if resp.status in (200, 201):
                             result = await resp.json()
                             file_id = result.get("id")
@@ -1818,64 +1979,22 @@ class Dify(PluginBase):
                 paragraphs = text.split("//n")
                 logger.info(f"检测到 //n 分隔符，将消息分为 {len(paragraphs)} 段发送")
 
-                # 检查是否是引用消息
-                should_quote = False
+                # 不再使用引用消息，直接使用普通文本回复
+                # 这些变量保留但不再使用
+                quoted_msg_id = ""
+                quoted_wxid = ""
+                quoted_content = ""
+                quoted_nickname = ""
+                should_quote = False  # 始终设置为False，不使用引用回复
 
-                # 首先检查是否有Quote字段（XML引用消息）
-                if message.get("Quote"):
-                    quote_info = message.get("Quote", {})
-                    quoted_msg_id = quote_info.get("MsgId", "") or quote_info.get("NewMsgId", "")
-                    quoted_wxid = quote_info.get("FromWxid", "")
-                    quoted_content = quote_info.get("Content", "")
-                    quoted_nickname = quote_info.get("Nickname", "")
-
-                    # 如果没有昵称，尝试获取
-                    if not quoted_nickname:
-                        try:
-                            quoted_nickname = await bot.get_nickname(quoted_wxid) or "未知用户"
-                        except:
-                            quoted_nickname = "未知用户"
-
-                    logger.info(f"检测到XML引用消息，引用MsgId={quoted_msg_id}, 引用人={quoted_nickname}")
-
-                    # 如果有消息ID且内容不是太长，使用引用回复
-                    if quoted_msg_id and quoted_wxid and quoted_content and len(quoted_content) <= 100:
-                        should_quote = True
-                        logger.info(f"将使用引用消息回复，引用MsgId={quoted_msg_id}")
-                else:
-                    # 使用普通消息信息
-                    quoted_msg_id = message.get("MsgId", "")
-                    quoted_wxid = message.get("SenderWxid", "")
-                    quoted_content = message.get("Content", "")
-
-                    # 尝试获取引用消息的发送者昵称
-                    try:
-                        quoted_nickname = await bot.get_nickname(quoted_wxid) or "未知用户"
-                    except:
-                        quoted_nickname = "未知用户"
-
-                    # 如果有消息ID且内容不是太长，使用引用回复
-                    if quoted_msg_id and quoted_wxid and quoted_content and len(quoted_content) <= 100:
-                        should_quote = True
-                        logger.info(f"将使用普通消息引用回复，引用MsgId={quoted_msg_id}")
+                logger.info("使用普通文本回复，不使用引用回复")
 
                 for i, paragraph in enumerate(paragraphs):
                     if paragraph.strip():
                         logger.debug(f"发送第 {i+1}/{len(paragraphs)} 段消息，长度: {len(paragraph.strip())} 字符")
 
-                        # 只对第一段使用引用回复
-                        if should_quote and i == 0:
-                            await self.send_quote_message(
-                                bot,
-                                message["FromWxid"],
-                                paragraph.strip(),
-                                quoted_msg_id,
-                                quoted_wxid,
-                                quoted_nickname,
-                                quoted_content[:100]  # 截断过长的引用内容
-                            )
-                        else:
-                            await bot.send_text_message(message["FromWxid"], paragraph.strip())
+                        # 直接发送普通文本消息，不使用引用回复
+                        await bot.send_text_message(message["FromWxid"], paragraph.strip())
 
                         # 添加短暂延迟，避免消息发送过快
                         if i < len(paragraphs) - 1:  # 如果不是最后一段
@@ -2070,8 +2189,10 @@ class Dify(PluginBase):
             if isinstance(image, str) and image.startswith("http"):
                 try:
                     logger.info(f"从URL下载图片: {image}")
-                    async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                        async with session.get(image) as resp:
+                    async with aiohttp.ClientSession() as session:
+                        # 正确的方式是在请求时设置代理，而不是在创建会话时
+                        proxy = self.http_proxy if self.http_proxy and self.http_proxy.strip() else None
+                        async with session.get(image, proxy=proxy) as resp:
                             if resp.status == 200:
                                 image_content = await resp.read()
                                 logger.info(f"成功从URL下载图片，大小: {len(image_content)} 字节")
@@ -2256,8 +2377,10 @@ class Dify(PluginBase):
             # 对于群聊消息，使用群聊ID作为user参数，这样对话会与群聊关联，而不是与个人关联
             user_id = message["FromWxid"] if message.get("IsGroup", False) else message["SenderWxid"]
             formdata.add_field("user", user_id)
-            async with aiohttp.ClientSession(proxy=self.http_proxy) as session:
-                async with session.post(audio_to_text_url, headers=headers, data=formdata) as resp:
+            async with aiohttp.ClientSession() as session:
+                # 正确的方式是在请求时设置代理，而不是在创建会话时
+                proxy = self.http_proxy if self.http_proxy and self.http_proxy.strip() else None
+                async with session.post(audio_to_text_url, headers=headers, data=formdata, proxy=proxy) as resp:
                     if resp.status == 200:
                         result = await resp.json()
                         text = result.get("text", "")
@@ -3355,73 +3478,17 @@ class Dify(PluginBase):
     async def send_quote_message(self, bot: WechatAPIClient, to_wxid: str, content: str, quoted_msg_id: str,
                               quoted_wxid: str, quoted_nickname: str, quoted_content: str):
         """
-        发送引用消息
+        发送引用消息 - 现在直接发送普通文本消息
 
         参数:
             bot: WechatAPIClient实例
             to_wxid: 消息接收人的wxid
             content: 要发送的新消息内容
-            quoted_msg_id: 被引用消息的newMsgId
-            quoted_wxid: 被引用消息发送者的wxid
-            quoted_nickname: 被引用消息发送者的昵称
-            quoted_content: 被引用的消息内容
+            quoted_msg_id: 被引用消息的newMsgId (不再使用)
+            quoted_wxid: 被引用消息发送者的wxid (不再使用)
+            quoted_nickname: 被引用消息发送者的昵称 (不再使用)
+            quoted_content: 被引用的消息内容 (不再使用)
         """
-        # 构建引用消息的XML
-        quote_xml = f'''<appmsg appid="" sdkver="0">
-            <title>{content}</title>
-            <des></des>
-            <action></action>
-            <type>57</type>
-            <showtype>0</showtype>
-            <soundtype>0</soundtype>
-            <mediatagname></mediatagname>
-            <messageext></messageext>
-            <messageaction></messageaction>
-            <content></content>
-            <contentattr>0</contentattr>
-            <url></url>
-            <lowurl></lowurl>
-            <dataurl></dataurl>
-            <lowdataurl></lowdataurl>
-            <songalbumurl></songalbumurl>
-            <songlyric></songlyric>
-            <appattach>
-                <totallen>0</totallen>
-                <attachid></attachid>
-                <emoticonmd5></emoticonmd5>
-                <fileext></fileext>
-                <cdnthumbaeskey></cdnthumbaeskey>
-                <aeskey></aeskey>
-            </appattach>
-            <extinfo></extinfo>
-            <sourceusername></sourceusername>
-            <sourcedisplayname></sourcedisplayname>
-            <thumburl></thumburl>
-            <md5></md5>
-            <statextstr></statextstr>
-            <directshare>0</directshare>
-            <refermsg>
-                <type>1</type>
-                <svrid>{quoted_msg_id}</svrid>
-                <fromusr>{quoted_wxid}</fromusr>
-                <chatusr>{bot.wxid}</chatusr>
-                <displayname>{quoted_nickname}</displayname>
-                <content>{quoted_content}</content>
-            </refermsg>
-        </appmsg>'''
-
-        # 压缩XML为单行（去除所有换行和多余空格）
-        quote_xml = quote_xml.replace('\n', '').replace('    ', '')
-
-        # 使用send_app_message发送引用消息
-        # type=57表示这是一个引用消息
-        try:
-            logger.info(f"发送引用消息: 引用MsgId={quoted_msg_id}, 引用人={quoted_nickname}")
-            result = await bot.send_app_message(to_wxid, quote_xml, 57)
-            return result
-        except Exception as e:
-            logger.error(f"发送引用消息失败: {e}")
-            logger.error(traceback.format_exc())
-            # 如果发送引用消息失败，回退到普通消息
-            logger.info("回退到发送普通文本消息")
-            return await bot.send_text_message(to_wxid, content)
+        # 直接发送普通文本消息，不使用引用格式
+        logger.info(f"发送普通文本消息，内容: {content[:30]}...")
+        return await bot.send_text_message(to_wxid, content)

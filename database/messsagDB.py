@@ -68,6 +68,12 @@ class MessageDB(metaclass=Singleton):
                            content: str = "",
                            is_group: bool = False) -> bool:
         """异步保存消息到数据库"""
+        # 确保content是字符串类型
+        if isinstance(content, dict) and "string" in content:
+            content = content["string"]
+        elif not isinstance(content, str):
+            content = str(content)
+            
         async with self._async_session_factory() as session:
             try:
                 message = Message(

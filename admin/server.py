@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any, Union, Set
 import sqlite3
 import glob
+from loguru import logger
 
 # 导入 tomllib 或 tomli 用于解析 TOML 文件
 try:
@@ -61,11 +62,30 @@ except ImportError as e:
     has_contacts_db = False
     print(f"联系人数据库模块导入失败: {e}")
 
-from loguru import logger
 import psutil
 import platform
 import socket
 import re
+
+# 导入系统统计API模块
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)  # 将当前目录添加到模块搜索路径
+
+try:
+    # 直接从当前目录导入
+    from system_stats_api import handle_system_stats
+    logger.info("成功导入系统统计API模块")
+except ImportError as e:
+    logger.error(f"导入系统统计API模块失败: {e}")
+    # 定义一个简单的替代函数
+    async def handle_system_stats(request, type="system", time_range="1"):
+        return JSONResponse(content={
+            "success": False,
+            "error": "系统统计API模块未加载"
+        })
+
 
 # 导入GitHub加速服务工具
 # 注意：这里使用相对导入，因为admin目录不在Python模块搜索路径中
@@ -1394,6 +1414,36 @@ def setup_routes():
             }
         )
 
+    # 插件市场页面
+    @app.get("/plugin-market", response_class=HTMLResponse)
+    async def plugin_market_page(request: Request):
+        # 检查认证状态
+        username = await check_auth(request)
+        if not username:
+            # 未认证，重定向到登录页面
+            return RedirectResponse(url="/login?next=/plugin-market", status_code=303)
+
+        # 获取版本信息
+        version_info = get_version_info()
+        version = version_info.get("version", "1.0.0")
+        update_available = version_info.get("update_available", False)
+        latest_version = version_info.get("latest_version", "")
+        update_url = version_info.get("update_url", "")
+        update_description = version_info.get("update_description", "")
+
+        return templates.TemplateResponse(
+            "plugin_market.html",
+            {
+                "request": request,
+                "active_page": "plugin_market",
+                "version": version,
+                "update_available": update_available,
+                "latest_version": latest_version,
+                "update_url": update_url,
+                "update_description": update_description
+            }
+        )
+
     # 联系人页面
     @app.get("/contacts", response_class=HTMLResponse)
     async def contacts_page(request: Request):
@@ -1510,6 +1560,26 @@ def setup_routes():
             "success": True,
             "data": get_system_status()
         }
+
+    # API: 系统统计 (需要认证)
+    @app.get("/api/system/stats", response_class=JSONResponse)
+    async def api_system_stats(request: Request, type: str = "system", time_range: str = "1"):
+        """系统统计API
+
+        参数:
+            type: 统计类型，可选值: messages(消息统计), system(系统信息)
+            time_range: 时间范围，仅在type=messages时有效，可选值: 1(今天), 7(本周), 30(本月)
+        """
+        # 检查认证状态
+        username = await check_auth(request)
+        if not username:
+            logger.error("访问系统统计API失败：未认证")
+            return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+        logger.info(f"用户 {username} 请求系统统计数据，类型: {type}, 范围: {time_range}")
+
+        # 调用system_stats_api模块中的处理函数
+        return await handle_system_stats(request, type, time_range)
 
     # API: 系统信息 (需要认证)
     @app.get("/api/system/info", response_class=JSONResponse)
@@ -7324,45 +7394,106 @@ def get_bot(wxid):
             logger.error(f"获取插件市场失败: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    # API: 提交插件到市场
-    @app.post("/api/plugin_market/submit", response_class=JSONResponse)
-    async def api_submit_plugin(
-        request: Request,
-        name: str = Form(...),
-        description: str = Form(...),
-        author: str = Form(...),
-        version: str = Form(...),
-        github_url: str = Form(...),
-        tags: str = Form(None),
-        requirements: str = Form(None),
-        icon: UploadFile = File(None)
-    ):
+    # API: 获取插件市场列表 (新路径)
+    @app.get("/api/plugin_market/list", response_class=JSONResponse)
+    async def api_get_plugin_market_list(request: Request):
         # 检查认证状态
         username = await check_auth(request)
         if not username:
             return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
 
         try:
+            # 从远程服务器获取插件市场数据
+            async with aiohttp.ClientSession() as session:
+                try:
+                    # 设置超时时间防止长时间等待
+                    async with session.get('https://api.xybot.icu/plugin_market', timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            plugins = data.get('plugins', [])
+                            return {"success": True, "plugins": plugins}
+                        else:
+                            error_text = await response.text()
+                            return {"success": False, "error": f"远程服务器返回错误: {response.status} - {error_text}"}
+                except aiohttp.ClientError as e:
+                    logger.error(f"连接远程插件市场失败: {e}")
+                    # 尝试从本地缓存获取
+                    cache_path = os.path.join(current_dir, 'plugin_market_cache.json')
+                    if os.path.exists(cache_path):
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                            return {"success": True, "plugins": cache_data.get('plugins', []), "cached": True}
+                    else:
+                        # 如果没有缓存，返回一些示例插件数据
+                        sample_plugins = [
+                            {
+                                "id": "sample1",
+                                "name": "DifyConversationManager",
+                                "description": "dify会话管理器，集成Dify接口对话，可以进行对话管理",
+                                "author": "全部的运营",
+                                "version": "1.2.0",
+                                "github_url": "https://github.com/xxxbot-plugins/DifyConversationManager",
+                                "tags": ["AI", "对话"],
+                                "category": "ai",
+                                "update_time": datetime.now().isoformat()
+                            },
+                            {
+                                "id": "sample2",
+                                "name": "AutoSummary",
+                                "description": "快速总结文本内容的插件，让你的文章一键生成摘要",
+                                "author": "全部的运营",
+                                "version": "1.3.0",
+                                "github_url": "https://github.com/xxxbot-plugins/AutoSummary",
+                                "tags": ["AI", "工具"],
+                                "category": "ai",
+                                "update_time": datetime.now().isoformat()
+                            },
+                            {
+                                "id": "sample3",
+                                "name": "ChatSummary",
+                                "description": "聊天记录总结工具，自动分析对话内容，提取关键信息",
+                                "author": "全部的运营",
+                                "version": "1.1.9",
+                                "github_url": "https://github.com/xxxbot-plugins/ChatSummary",
+                                "tags": ["AI", "聊天"],
+                                "category": "ai",
+                                "update_time": datetime.now().isoformat()
+                            }
+                        ]
+                        return {"success": True, "plugins": sample_plugins, "sample": True}
+        except Exception as e:
+            logger.error(f"获取插件市场失败: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    # API: 提交插件到市场
+    @app.post("/api/plugin_market/submit", response_class=JSONResponse)
+    async def api_submit_plugin(request: Request):
+        # 检查认证状态
+        username = await check_auth(request)
+        if not username:
+            return JSONResponse(status_code=401, content={"success": False, "error": "未认证"})
+
+        try:
+            # 从请求中获取JSON数据
+            data = await request.json()
+
             # 准备提交数据
             plugin_data = {
-                "name": name,
-                "description": description,
-                "author": author,
-                "version": version,
-                "github_url": github_url,
-                "tags": tags or "",
-                "requirements": requirements or "",
+                "name": data.get("name"),
+                "description": data.get("description"),
+                "author": data.get("author"),
+                "version": data.get("version"),
+                "github_url": data.get("github_url"),
+                "tags": data.get("tags", []),
+                "requirements": data.get("requirements", []),
                 "submitted_by": username,  # 记录提交者
                 "submitted_at": datetime.now().isoformat(),  # 记录提交时间
                 "status": "pending"  # 状态：pending, approved, rejected
             }
 
-            # 处理图标上传
-            if icon and icon.filename:
-                # 读取图标内容并转为base64
-                icon_content = await icon.read()
-                base64_icon = base64.b64encode(icon_content).decode('utf-8')
-                plugin_data["icon_base64"] = base64_icon
+            # 处理图标（如果有）
+            if "icon" in data and data["icon"]:
+                plugin_data["icon_base64"] = data["icon"]
 
             # 发送到远程服务器
             async with aiohttp.ClientSession() as session:
@@ -7567,7 +7698,7 @@ def get_bot(wxid):
                 async with aiohttp.ClientSession() as session:
                     try:
                         # 使用插件市场API配置
-                        url = f"{PLUGIN_MARKET_API['BASE_URL']}/plugins/submit/"  # 添加尾部斜杠，避免重定向
+                        url = f"{PLUGIN_MARKET_API['BASE_URL']}{PLUGIN_MARKET_API['SUBMIT']}"
                         logger.info(f"正在同步插件到服务器: {url}")
 
                         async with session.post(

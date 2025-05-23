@@ -1042,12 +1042,17 @@ class WX849Channel(ChatChannel):
             if login_success:
                 logger.info("[WX849] 成功获取原始框架会话，已启动HTTP服务器接收消息")
                 self.is_running = True
-
                 # 保持服务器运行
+                failCount = 0
                 while self.is_running:
                     await asyncio.sleep(60)
                     # 定期发送心跳检测原始框架状态
                     if not await self._check_original_framework_status():
+                        failCount += 1
+                        logger.error(f"[WX849] 请求原始框架状态失败,次数: {failCount}")
+                    else:
+                        failCount = 0
+                    if failCount >= 3:
                         logger.error("[WX849] 检测到原始框架会话已失效，DOW框架将停止运行")
                         self.is_running = False
                         break
