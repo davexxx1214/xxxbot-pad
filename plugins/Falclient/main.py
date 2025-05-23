@@ -92,7 +92,7 @@ class Falclient(PluginBase):
         if content.startswith(self.fal_text_prefix):
             user_prompt = content[len(self.fal_text_prefix):].strip()
             # 新增：先回复收到请求
-            notice = "你的文生视频的请求已经收到，请稍候..."
+            notice = "您的文生视频的请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
@@ -143,7 +143,7 @@ class Falclient(PluginBase):
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             # 新增：先回复收到请求
-            notice = "你的图生视频的请求已经收到，请稍候..."
+            notice = "您的图生视频的请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
@@ -154,7 +154,7 @@ class Falclient(PluginBase):
             idx = content.find(self.fal_text_prefix)
             user_prompt = content[idx + len(self.fal_text_prefix):].strip()
             # 新增：先回复收到请求
-            notice = "你的文生视频的请求已经收到，请稍候..."
+            notice = "您的文生视频的请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
