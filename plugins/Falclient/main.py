@@ -46,12 +46,6 @@ class Falclient(PluginBase):
         except Exception as e:
             logger.error(f"加载Falclient插件配置文件失败: {e}")
             raise
-        # 记录待生成视频的状态: {user_or_group_id: timestamp}
-        self.waiting_video = {}
-        self.image_msgid_cache = set()
-        self.image_cache_timeout = 60
-        self.image_cache = {}
-        
         # 检查pymediainfo依赖
         try:
             from pymediainfo import MediaInfo
@@ -61,20 +55,11 @@ class Falclient(PluginBase):
             if self.debug_mode:
                 logger.warning("pymediainfo未安装，视频时长将使用默认值。建议安装: pip install pymediainfo")
         
-        # 检查ffmpeg可用性
-        if self.extract_video_frame:
-            try:
-                import subprocess
-                result = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
-                self.has_ffmpeg = result.returncode == 0
-                if self.has_ffmpeg and self.debug_mode:
-                    logger.info("ffmpeg可用，将从视频中提取第一帧作为封面")
-            except:
-                self.has_ffmpeg = False
-                if self.debug_mode:
-                    logger.warning("ffmpeg不可用，将使用默认生成的封面。建议安装ffmpeg以获得更好的封面效果")
-        else:
-            self.has_ffmpeg = False
+        # 记录待生成视频的状态: {user_or_group_id: timestamp}
+        self.waiting_video = {}
+        self.image_msgid_cache = set()
+        self.image_cache_timeout = 60
+        self.image_cache = {}
 
     def get_waiting_key(self, message: dict):
         if message.get("IsGroup"):
