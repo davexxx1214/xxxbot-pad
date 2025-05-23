@@ -1,8 +1,7 @@
 """
 channel factory
 """
-from dow.common import const
-from dow.common.log import logger # Added logger import just in case, and to match pattern
+from common import const
 
 
 def create_bot(bot_type):

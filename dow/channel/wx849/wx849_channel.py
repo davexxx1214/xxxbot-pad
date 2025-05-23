@@ -12,17 +12,17 @@ import re  # 添加re模块导入
 from typing import Dict, Any, Optional, List, Tuple
 import urllib.parse  # 添加urllib.parse模块导入
 import requests
-from dow.bridge.context import Context, ContextType  # 确保导入Context类
-from dow.bridge.reply import Reply, ReplyType
-from dow.channel.chat_channel import ChatChannel
-from dow.channel.chat_message import ChatMessage
-from dow.channel.wx849.wx849_message import WX849Message  # 改为从wx849_message导入WX849Message
-from dow.common.expired_dict import ExpiredDict
-from dow.common.log import logger
-from dow.common.singleton import singleton
-from dow.common.time_check import time_checker
-from dow.common.utils import remove_markdown_symbol
-from dow.config import conf, get_appdata_dir
+from bridge.context import Context, ContextType  # 确保导入Context类
+from bridge.reply import Reply, ReplyType
+from channel.chat_channel import ChatChannel
+from channel.chat_message import ChatMessage
+from channel.wx849.wx849_message import WX849Message  # 改为从wx849_message导入WX849Message
+from common.expired_dict import ExpiredDict
+from common.log import logger
+from common.singleton import singleton
+from common.time_check import time_checker
+from common.utils import remove_markdown_symbol
+from config import conf, get_appdata_dir
 # 新增HTTP服务器相关导入
 from aiohttp import web
 import uuid
@@ -32,19 +32,6 @@ import subprocess
 import math
 from io import BytesIO
 from PIL import Image
-import os # Ensure os is imported
-
-try:
-    import pillow_heif
-    # Register HEIF opener with Pillow
-    pillow_heif.register_heif_opener()
-    heif_available = True
-    logger.info("[WX849] pillow_heif successfully imported and HEIF opener registered.")
-except ImportError:
-    heif_available = False
-    logger.warning("[WX849] pillow_heif library not found. HEIC/HEIF conversion will not be available.")
-    logger.warning("[WX849] To enable HEIC/HEIF support, please install pillow-heif: pip install pillow-heif")
-
 
 # 增大日志行长度限制，以便完整显示XML内容
 try:
@@ -2153,9 +2140,6 @@ class WX849Channel(ChatChannel):
 
             # 分段下载
             all_chunks_success = True
-            converted_from_heic = False # Initialize flag for HEIC conversion tracking
-            original_image_path_for_logging = image_path # Store initial path for logging in case of PIL error
-
             for i in range(num_chunks):
                 start_pos = i * chunk_size
                 current_chunk_size = min(chunk_size, data_len - start_pos)
@@ -2198,13 +2182,7 @@ class WX849Channel(ChatChannel):
 
                             # 检查响应是否成功
                             if not result.get("Success", False):
-                                error_message = result.get('Message', 'Unknown error during chunk download.')
-                                try:
-                                    # Attempt to serialize the full result for detailed logging
-                                    full_response_str = json.dumps(result, ensure_ascii=False)
-                                except TypeError: # In case result contains non-serializable data
-                                    full_response_str = str(result)
-                                logger.error(f"[WX849] Download chunk {i+1}/{num_chunks} failed. Message: {error_message}. API Response: {full_response_str}")
+                                logger.error(f"[WX849] 下载图片分段失败: {result.get('Message', '未知错误')}")
                                 all_chunks_success = False
                                 break
 
@@ -2505,102 +2483,18 @@ class WX849Channel(ChatChannel):
 
                 # 检查文件是否存在且有效
                 if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
-                    logger.info(f"[WX849] Image downloaded to {image_path}, size: {os.path.getsize(image_path)}. Checking for HEIC/HEIF format.")
-                    is_heic = False
-                    # original_image_path = image_path # Store original path # This is now original_image_path_for_logging
-                    
-                    # Attempt to identify HEIC/HEIF using pillow_heif if available
-                    if heif_available:
-                        try:
-                            img_for_check = Image.open(image_path)
-                            if img_for_check.format in ["HEIF", "HEIC"]:
-                                is_heic = True
-                                logger.info(f"[WX849] Detected {img_for_check.format} image format using Pillow.")
-                            else:
-                                logger.info(f"[WX849] Image format via Pillow: {img_for_check.format}. Not HEIC/HEIF.")
-                            img_for_check.close()
-                        except Exception as heif_check_err:
-                            # Pillow couldn't open it, or it's not registered for HEIC.
-                            # This might happen if it's not a common format or if it's HEIC and pillow_heif isn't perfectly integrated.
-                            # We can also check magic bytes as a fallback.
-                            logger.warning(f"[WX849] Pillow check for HEIC failed: {heif_check_err}. Will try magic bytes if pillow_heif was loaded.")
-                            pass # Continue to magic byte check if pillow_heif was meant to be available
-
-                    # Fallback or primary check: Magic byte check for HEIC/HEIF
-                    if not is_heic: # Only if not already identified by Pillow
-                        try:
-                            with open(image_path, 'rb') as f_check:
-                                header = f_check.read(12)
-                            # Common HEIC/HEIF magic bytes (ftypheic, ftypheix, ftyphevc, ftyphevx, ftyphevm, ftypmif1)
-                            heic_magic_numbers = [
-                                b'ftypheic', b'ftypheix', b'ftyphevc', 
-                                b'ftyphevx', b'ftyphevm', b'ftypmif1'
-                            ]
-                            # The magic number is typically at offset 4
-                            if header[4:8] in heic_magic_numbers or header[4:12] in [b'ftypheic', b'ftypheix', b'ftyphevc', b'ftyphevx', b'ftyphevm', b'ftypmif1']:
-                                 is_heic = True
-                                 logger.info(f"[WX849] Detected HEIC/HEIF image format using magic bytes: {header[4:12]}")
-                        except Exception as e_magic:
-                            logger.error(f"[WX849] Error checking magic bytes for HEIC/HEIF: {e_magic}")
-
-
-                    if is_heic:
-                        if heif_available:
-                            logger.info(f"[WX849] Attempting to convert HEIC/HEIF image at {image_path} to JPEG.")
-                            try:
-                                heif_img = Image.open(image_path)
-                                # Ensure it's in RGB mode for JPEG compatibility
-                                if heif_img.mode != 'RGB':
-                                    heif_img = heif_img.convert('RGB')
-                                
-                                # Create new JPEG path
-                                base, ext = os.path.splitext(image_path)
-                                jpeg_image_path = base + ".jpg"
-                                
-                                heif_img.save(jpeg_image_path, "JPEG")
-                                heif_img.close()
-                                
-                                # Optionally, remove the original HEIC file
-                                # os.remove(image_path) 
-                                
-                                logger.info(f"[WX849] Successfully converted HEIC/HEIF to JPEG: {jpeg_image_path}")
-                                image_path = jpeg_image_path # Update image_path to the new JPEG file
-                                converted_from_heic = True # Set flag as conversion was successful
-                                
-                                # Update cmsg.image_path and cmsg.content if cmsg is accessible here
-                                # This part might need adjustment based on how cmsg is passed or updated
-                                if 'cmsg' in locals() or 'cmsg' in globals():
-                                    cmsg.image_path = image_path
-                                    cmsg.content = image_path
-                                    logger.info(f"[WX849] Updated cmsg.image_path and cmsg.content to {image_path}")
-                                else:
-                                    logger.warning("[WX849] 'cmsg' object not found in local/global scope, cannot update its image_path directly after conversion.")
-
-                            except Exception as e_conv:
-                                logger.error(f"[WX849] Failed to convert HEIC/HEIF image to JPEG: {e_conv}")
-                                # Keep all_chunks_success as True, but image_path still points to the original HEIC.
-                                # The existing PIL validation might fail, which is acceptable if conversion fails.
-                        else:
-                            logger.warning(f"[WX849] HEIC/HEIF image detected, but pillow_heif is not available for conversion. Proceeding with original file.")
-                    
-                    # The existing PIL validation block should follow here.
-                    # It will now operate on 'image_path', which is either the original or the converted JPEG.
-                    #验证图片文件是否为有效的图片格式
+                    # 验证图片文件是否为有效的图片格式
                     try:
-                        from PIL import Image # Ensure PIL is imported here if not already
+                        from PIL import Image
                         try:
                             # 尝试打开图片文件
                             with Image.open(image_path) as img:
                                 # 获取图片格式和大小
                                 img_format = img.format
                                 img_size = img.size
-                                logger.info(f"[WX849] 图片验证成功: 格式={img_format}, 大小={img_size}, Path: {image_path}")
+                                logger.info(f"[WX849] 图片验证成功: 格式={img_format}, 大小={img_size}")
                         except Exception as img_err:
-                            log_message = f"[WX849] Image validation failed for {image_path}. Error: {img_err}"
-                            if converted_from_heic and image_path.endswith(".jpg"): # Check if it was converted
-                                log_message += f" (Original HEIC path: {original_image_path_for_logging})"
-                            logger.error(log_message)
-                            logger.error(traceback.format_exc()) # Ensure traceback is also logged for full context
+                            logger.error(f"[WX849] 图片验证失败，可能不是有效的图片文件: {img_err}")
                             # 尝试修复图片文件
                             try:
                                 # 读取文件内容
@@ -2630,13 +2524,9 @@ class WX849Channel(ChatChannel):
                                 logger.error(f"[WX849] 尝试修复图片文件失败: {fix_err}")
                     except ImportError:
                         logger.warning(f"[WX849] PIL库未安装，无法验证图片有效性")
-                    
+
                     # 设置图片本地路径
-                    # Ensure cmsg is available or handle its absence
-                    if 'cmsg' in locals() or 'cmsg' in globals():
-                        cmsg.image_path = image_path
-                    else:
-                        logger.warning("[WX849] 'cmsg' not found, cmsg.image_path not updated after potential conversion/validation.")
+                    cmsg.image_path = image_path
 
                     # 更新消息内容为图片路径，以便DOW框架处理
                     cmsg.content = image_path

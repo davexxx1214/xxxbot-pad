@@ -1,12 +1,12 @@
-from dow.bot.bot_factory import create_bot
-from dow.bridge.context import Context
-from dow.bridge.reply import Reply
-from dow.common import const
-from dow.common.log import logger
-from dow.common.singleton import singleton
-from dow.config import conf
-from dow.translate.factory import create_translator
-from dow.voice.factory import create_voice
+from bot.bot_factory import create_bot
+from bridge.context import Context
+from bridge.reply import Reply
+from common import const
+from common.log import logger
+from common.singleton import singleton
+from config import conf
+from translate.factory import create_translator
+from voice.factory import create_voice
 
 
 @singleton

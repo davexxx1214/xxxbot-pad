@@ -5,14 +5,14 @@ import time
 from asyncio import CancelledError
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from dow.bridge.context import *
-from dow.bridge.reply import *
-from dow.channel.channel import Channel
-from dow.common.dequeue import Dequeue
-from dow.common import memory
-from dow.plugins import *
-from dow.common.log import logger
-from dow.config import conf
+from bridge.context import *
+from bridge.reply import *
+from channel.channel import Channel
+from common.dequeue import Dequeue
+from common import memory
+from plugins import *
+from common.log import logger
+from config import conf
 
 try:
     from voice.audio_convert import any_to_wav
