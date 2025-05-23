@@ -1026,6 +1026,8 @@ class WX849Channel(ChatChannel):
             return False
 
     # 修改启动方法，不再启动消息监听器
+        # 初始化iOS兼容性处理器
+        self.ios_handler = IOSCompatibilityHandler(self)
     def startup(self):
         """启动函数"""
         logger.info("[WX849] 正在启动...")
@@ -2182,7 +2184,19 @@ class WX849Channel(ChatChannel):
 
                             # 检查响应是否成功
                             if not result.get("Success", False):
-                                logger.error(f"[WX849] 下载图片分段失败: {result.get('Message', '未知错误')}")
+                                error_msg = result.get('Message', '未知错误')
+                                logger.error(f"[WX849] 下载图片分段失败: {error_msg}")
+                                
+                                # 检测iOS设备特征：BaseResponse.ret = -104错误
+                                if self.ios_handler.is_ios_error(result):
+                                    logger.warning(f"[WX849] 检测到iOS设备-104错误，启用iOS兼容模式")
+                                    # 使用iOS兼容模式下载
+                                    ios_success = await self.ios_handler.download_image_ios_mode(cmsg, image_path)
+                                    if ios_success:
+                                        return True
+                                    else:
+                                        logger.error(f"[WX849] iOS兼容模式也失败了")
+                                
                                 all_chunks_success = False
                                 break
 
