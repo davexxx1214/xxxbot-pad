@@ -35,11 +35,17 @@ class Sum4all(PluginBase):
             self.vision_api_key = plugin_config.get("vision_api_key", None)
             self.vision_api_base = plugin_config.get("vision_api_base", None)
             self.vision_model = plugin_config.get("vision_model", "o3")
+            # Gemini读图配置
+            self.gemini_read_prefix = plugin_config.get("gemini_read_prefix", "读图")
+            self.gemini_api_key = plugin_config.get("gemini_api_key", None)
+            self.gemini_model = plugin_config.get("gemini_model", "gemini-2.5-pro-preview-05-06")
         except Exception as e:
             logger.error(f"加载Sum4all插件配置文件失败: {e}")
             raise
         # 记录待识图状态: {user_or_group_id: timestamp}
         self.waiting_vision = {}
+        # 记录待Gemini读图状态: {user_or_group_id: timestamp}
+        self.waiting_gemini_read = {}
         # 图片缓存，防止重复处理
         self.image_msgid_cache = set()
         self.image_cache_timeout = 60
@@ -112,11 +118,18 @@ class Sum4all(PluginBase):
         if not content:
             return True
         is_trigger = False
+        is_gemini_trigger = False
         user_prompt = None
+        
         # 群聊和私聊都直接判断是否以vision_prefix开头
         if content.startswith(self.vision_prefix):
             is_trigger = True
             user_prompt = content[len(self.vision_prefix):].strip()
+        # 检查是否以gemini_read_prefix开头
+        elif content.startswith(self.gemini_read_prefix):
+            is_gemini_trigger = True
+            user_prompt = content[len(self.gemini_read_prefix):].strip()
+            
         if is_trigger:
             key = self.get_waiting_key(message)
             if not user_prompt:
@@ -132,6 +145,21 @@ class Sum4all(PluginBase):
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             return False  # 阻止后续插件处理
+        elif is_gemini_trigger:
+            key = self.get_waiting_key(message)
+            if not user_prompt:
+                user_prompt = "请识别这张图片的内容。"
+            self.waiting_gemini_read[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            logger.info(f"Sum4all: 记录待Gemini读图状态: {key}, prompt: {user_prompt}")
+            tip = "💡已开启Gemini读图模式(gemini-2.5-pro-preview-05-06)，您接下来第一张图片会进行识别。\n当前的提示词为：\n" + user_prompt
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False  # 阻止后续插件处理
         return True  # 允许后续插件处理
 
     @on_at_message(priority=30)
@@ -141,12 +169,20 @@ class Sum4all(PluginBase):
         content = message["Content"].strip()
         logger.info(f"Sum4all (@message) content unicode: {[hex(ord(c)) for c in content]}")
         is_trigger = False
+        is_gemini_trigger = False
         user_prompt = None
+        
         if self.vision_prefix in content:
             is_trigger = True
             # 提取"识图"后面的内容作为提示词
             idx = content.find(self.vision_prefix)
             user_prompt = content[idx + len(self.vision_prefix):].strip()
+        elif self.gemini_read_prefix in content:
+            is_gemini_trigger = True
+            # 提取"读图"后面的内容作为提示词
+            idx = content.find(self.gemini_read_prefix)
+            user_prompt = content[idx + len(self.gemini_read_prefix):].strip()
+            
         if is_trigger:
             key = self.get_waiting_key(message)
             if not user_prompt:
@@ -157,6 +193,21 @@ class Sum4all(PluginBase):
             }
             logger.info(f"Sum4all (@message): 记录待识图状态: {key}, prompt: {user_prompt}")
             tip = "💡已开启识图模式(o3)，您接下来第一张图片会进行识别。\n当前的提示词为：\n" + user_prompt
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False  # 阻止后续插件处理
+        elif is_gemini_trigger:
+            key = self.get_waiting_key(message)
+            if not user_prompt:
+                user_prompt = "请识别这张图片的内容。"
+            self.waiting_gemini_read[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt
+            }
+            logger.info(f"Sum4all (@message): 记录待Gemini读图状态: {key}, prompt: {user_prompt}")
+            tip = "💡已开启Gemini读图模式(gemini-2.5-pro-preview-05-06)，您接下来第一张图片会进行识别。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
@@ -178,20 +229,30 @@ class Sum4all(PluginBase):
         content = message["Content"].strip()
         quote_info = message.get("Quote", {})
 
-        # Check if vision_prefix is in the text and the quoted message is an image
-        if not (self.vision_prefix in content and quote_info.get("MsgType") == 3):
+        # Check if vision_prefix or gemini_read_prefix is in the text and the quoted message is an image
+        is_vision_quote = self.vision_prefix in content and quote_info.get("MsgType") == 3
+        is_gemini_quote = self.gemini_read_prefix in content and quote_info.get("MsgType") == 3
+        
+        if not (is_vision_quote or is_gemini_quote):
             return True  # Conditions not met, let other handlers try
 
-        logger.info(f"Sum4all: Detected vision prefix in quote message for an image. MsgId: {current_msg_id}")
+        logger.info(f"Sum4all: Detected {'vision' if is_vision_quote else 'gemini read'} prefix in quote message for an image. MsgId: {current_msg_id}")
 
         # Extract user prompt
         user_prompt = "请识别这张图片的内容。"  # Default prompt
         try:
-            idx = content.find(self.vision_prefix)
-            if idx != -1:
-                extracted_prompt = content[idx + len(self.vision_prefix):].strip()
-                if extracted_prompt:
-                    user_prompt = extracted_prompt
+            if is_vision_quote:
+                idx = content.find(self.vision_prefix)
+                if idx != -1:
+                    extracted_prompt = content[idx + len(self.vision_prefix):].strip()
+                    if extracted_prompt:
+                        user_prompt = extracted_prompt
+            elif is_gemini_quote:
+                idx = content.find(self.gemini_read_prefix)
+                if idx != -1:
+                    extracted_prompt = content[idx + len(self.gemini_read_prefix):].strip()
+                    if extracted_prompt:
+                        user_prompt = extracted_prompt
         except Exception as e:
             logger.warning(f"Sum4all (quote): Error extracting prompt: {e}. Using default.")
         
@@ -235,12 +296,19 @@ class Sum4all(PluginBase):
                 Image.open(io.BytesIO(image_bytes))  # Validate image
                 logger.info(f"Sum4all (quote): Quoted image (MD5: {md5}) validated, size: {len(image_bytes)}. Proceeding with vision.")
                 
-                await self.handle_vision_image(image_bytes, bot, message, user_prompt)
+                # 根据引用类型调用不同的处理函数
+                if is_gemini_quote:
+                    await self.handle_gemini_read_image(image_bytes, bot, message, user_prompt)
+                else:
+                    await self.handle_vision_image(image_bytes, bot, message, user_prompt)
 
                 key = self.get_waiting_key(message)
                 if key in self.waiting_vision:
                     logger.info(f"Sum4all (quote): Clearing pending vision state for key: {key}")
                     self.waiting_vision.pop(key, None)
+                if key in self.waiting_gemini_read:
+                    logger.info(f"Sum4all (quote): Clearing pending gemini read state for key: {key}")
+                    self.waiting_gemini_read.pop(key, None)
                 
                 if current_msg_id:
                     self.image_msgid_cache.add(current_msg_id)
@@ -256,7 +324,7 @@ class Sum4all(PluginBase):
                     await bot.send_text_message(message["FromWxid"], reply_content)
                 if current_msg_id:
                     self.image_msgid_cache.add(current_msg_id)
-                return False 
+                return False
         else:
             # This block is reached if image_bytes is empty (not found by MD5 or other errors)
             logger.warning(f"Sum4all (quote): Failed to get valid image bytes from quote (MD5: {md5}). Not performing vision.")
@@ -285,12 +353,19 @@ class Sum4all(PluginBase):
         if not msg_id or msg_id in self.image_msgid_cache:
             logger.info(f"Sum4all: 消息ID {msg_id} 已处理或无效，跳过")
             return True
+        
         key = self.get_waiting_key(message)
-        waiting_info = self.waiting_vision.get(key)
-        if not waiting_info:
+        waiting_vision_info = self.waiting_vision.get(key)
+        waiting_gemini_info = self.waiting_gemini_read.get(key)
+        
+        if not waiting_vision_info and not waiting_gemini_info:
             logger.info(f"Sum4all: 当前无待识图状态: {key}")
             return True
-        user_prompt = waiting_info.get("prompt", "请识别这张图片的内容。")
+            
+        # 确定使用哪种处理方式和提示词
+        is_gemini_mode = waiting_gemini_info is not None
+        user_prompt = (waiting_gemini_info or waiting_vision_info).get("prompt", "请识别这张图片的内容。")
+        
         image_bytes = b""
         # 1. xml格式，分段下载
         if isinstance(xml_content, str) and "<img " in xml_content:
@@ -334,8 +409,13 @@ class Sum4all(PluginBase):
         if image_bytes and len(image_bytes) > 0:
             try:
                 Image.open(io.BytesIO(image_bytes))
-                logger.info(f"Sum4all: 图片校验通过，准备识图，大小: {len(image_bytes)} 字节")
-                await self.handle_vision_image(image_bytes, bot, message, user_prompt)
+                logger.info(f"Sum4all: 图片校验通过，准备{'Gemini读图' if is_gemini_mode else '识图'}，大小: {len(image_bytes)} 字节")
+                
+                # 根据模式调用不同的处理函数
+                if is_gemini_mode:
+                    await self.handle_gemini_read_image(image_bytes, bot, message, user_prompt)
+                else:
+                    await self.handle_vision_image(image_bytes, bot, message, user_prompt)
             except Exception as e:
                 logger.error(f"Sum4all: 图片校验失败: {e}, image_bytes前100字节: {image_bytes[:100]}")
                 reply_content = "图片文件无效或已损坏，识图失败。"
@@ -350,10 +430,12 @@ class Sum4all(PluginBase):
                 await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], reply_content)
+        
         # 状态清理
         self.waiting_vision.pop(key, None)
+        self.waiting_gemini_read.pop(key, None)
         self.image_msgid_cache.add(msg_id)
-        logger.info(f"Sum4all: 识图流程结束: MsgId={msg_id}")
+        logger.info(f"Sum4all: {'Gemini读图' if is_gemini_mode else '识图'}流程结束: MsgId={msg_id}")
         return False
 
     async def handle_vision_image(self, image_bytes, bot, message, prompt):
@@ -391,6 +473,38 @@ class Sum4all(PluginBase):
                         reply_content = f"识图API请求失败: {resp.status}"
         except Exception as e:
             reply_content = f"识图API调用异常: {e}"
+        if message["IsGroup"]:
+            await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], reply_content)
+
+    async def handle_gemini_read_image(self, image_bytes, bot, message, prompt):
+        """使用Gemini API处理图片识别"""
+        try:
+            # 添加中文响应提示
+            enhanced_prompt = f"{prompt}(Always response in Simplified Chinese, unless user is in English)"
+            
+            # 配置Gemini API
+            import google.generativeai as genai
+            import PIL.Image
+            
+            genai.configure(api_key=self.gemini_api_key)
+            model = genai.GenerativeModel(self.gemini_model)
+            
+            # 将image_bytes转换为PIL Image对象
+            image = PIL.Image.open(io.BytesIO(image_bytes))
+            
+            # 生成内容
+            response = model.generate_content([enhanced_prompt, image])
+            reply_content = response.text.strip()
+            
+            logger.info(f"Sum4all Gemini: 成功获取识图结果，长度: {len(reply_content)}")
+            
+        except Exception as e:
+            reply_content = f"Gemini读图API调用异常: {e}"
+            logger.error(f"Sum4all Gemini: API调用失败: {e}")
+            logger.error(traceback.format_exc())
+        
         if message["IsGroup"]:
             await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
         else:
