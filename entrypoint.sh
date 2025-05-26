@@ -50,7 +50,7 @@ sleep 2
 if ! screen -list | grep -q "pad_service"; then
     echo "Creating PAD screen session..."
     screen -dmS pad_service bash -c '
-        cd "'$SCRIPT_DIR'/849/pad" || { echo "PAD directory not found"; exit 1; }
+        cd "'$SCRIPT_DIR'/849/pad2" || { echo "PAD directory not found"; exit 1; }
         echo "Adding execute permission to linuxService..."
         chmod +x linuxService
         echo "Starting PAD service..."
