@@ -36,10 +36,13 @@ class Falclient(PluginBase):
             self.fal_img_prefix = plugin_config.get("fal_img_prefix", "图生视频")
             self.fal_text_prefix = plugin_config.get("fal_text_prefix", "文生视频")
             self.fal_edit_prefix = plugin_config.get("fal_edit_prefix", "/p")
+            self.jimeng_prefix = plugin_config.get("jimeng_prefix", "jimeng")
             self.fal_kling_img_model = plugin_config.get("fal_kling_img_model", "kling-video/v2/master/image-to-video")
             self.fal_kling_text_model = plugin_config.get("fal_kling_text_model", "kling-video/v2/master/text-to-video")
             self.fal_edit_model = plugin_config.get("fal_edit_model", "flux-pro/kontext")
             self.fal_api_key = plugin_config.get("fal_api_key", None)
+            self.jimeng_api_key = plugin_config.get("jimeng_api_key", None)
+            self.jimeng_url = plugin_config.get("jimeng_url", None)
             
             # 配置选项
             self.debug_mode = plugin_config.get("debug_mode", True)
@@ -152,6 +155,26 @@ class Falclient(PluginBase):
                 await bot.send_text_message(message["FromWxid"], tip)
             return False
         
+        # 新增：即梦AI文字生成图片
+        if content.startswith(self.jimeng_prefix):
+            user_prompt = content[len(self.jimeng_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用即梦AI绘图3.0，指令格式为:\n\n{self.jimeng_prefix} + 空格 + 主题(支持中文)\n例如：{self.jimeng_prefix} 一只可爱的猫"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
+            
+            # 先回复收到请求
+            notice = "您的即梦AI绘图请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
+            await self.handle_jimeng_service(bot, message, user_prompt)
+            return False
+        
         return True
 
     @on_at_message(priority=30)
@@ -220,6 +243,27 @@ class Falclient(PluginBase):
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
+            return False
+        
+        # 新增：即梦AI文字生成图片
+        if self.jimeng_prefix in content:
+            idx = content.find(self.jimeng_prefix)
+            user_prompt = content[idx + len(self.jimeng_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用即梦AI绘图3.0，指令格式为:\n\n{self.jimeng_prefix} + 空格 + 主题(支持中文)\n例如：{self.jimeng_prefix} 一只可爱的猫"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
+            
+            # 先回复收到请求
+            notice = "您的即梦AI绘图请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
+            await self.handle_jimeng_service(bot, message, user_prompt)
             return False
         
         return True
@@ -1066,6 +1110,75 @@ class Falclient(PluginBase):
     async def send_edit_error(self, bot, message, error_msg):
         """发送图片编辑错误消息"""
         full_error = f"图片编辑失败：{error_msg}"
+        if message.get("IsGroup"):
+            await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], full_error)
+
+    async def handle_jimeng_service(self, bot, message, prompt):
+        """处理即梦AI文字生成图片任务"""
+        logger.info(f"[jimeng] 开始处理即梦AI绘图任务，提示词: {prompt}")
+        
+        if not self.jimeng_api_key or not self.jimeng_url:
+            error_msg = "即梦AI配置不完整，请检查jimeng_api_key和jimeng_url配置"
+            logger.error(f"[jimeng] {error_msg}")
+            await self.send_jimeng_error(bot, message, error_msg)
+            return
+        
+        try:
+            import aiohttp
+            
+            # 发送API请求
+            url = f"{self.jimeng_url}/v1/images/generations"
+            headers = {
+                "Authorization": f"Bearer {self.jimeng_api_key}"
+            }
+            data = {
+                "model": "jimeng-3.0",
+                "prompt": prompt
+            }
+            
+            logger.info(f"[jimeng] API请求 url={url} headers={headers} data={data}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=data) as resp:
+                    logger.info(f"[jimeng] API响应状态: {resp.status}")
+                    
+                    if resp.status == 200:
+                        result = await resp.json()
+                        logger.info(f"[jimeng] API响应: {result}")
+                        
+                        data_list = result.get('data', [])
+                        if data_list:
+                            # 遍历所有生成的图片URL并发送
+                            for item in data_list:
+                                url = item.get('url')
+                                if url:
+                                    logger.info(f"[jimeng] 图片URL: {url}")
+                                    await self.download_and_send_image(bot, message, url, "即梦AI绘图")
+                            
+                            # 发送完成提示
+                            success_msg = "即梦AI图片生成完毕。"
+                            if message.get("IsGroup"):
+                                await bot.send_at_message(message["FromWxid"], success_msg, [message["SenderWxid"]])
+                            else:
+                                await bot.send_text_message(message["FromWxid"], success_msg)
+                        else:
+                            await self.send_jimeng_error(bot, message, "API返回数据为空")
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"[jimeng] API请求失败: {resp.status} - {error_text}")
+                        await self.send_jimeng_error(bot, message, f"API请求失败: {resp.status}")
+                        
+        except Exception as e:
+            logger.error(f"[jimeng] 即梦AI绘图API调用异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            await self.send_jimeng_error(bot, message, f"服务出错: {str(e)}")
+
+    async def send_jimeng_error(self, bot, message, error_msg):
+        """发送即梦AI绘图错误消息"""
+        full_error = f"即梦AI绘图失败：{error_msg}"
         if message.get("IsGroup"):
             await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
         else:
