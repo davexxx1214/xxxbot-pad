@@ -133,13 +133,19 @@ class Falclient(PluginBase):
         # 新增：图片编辑
         if content.startswith(self.fal_edit_prefix):
             user_prompt = content[len(self.fal_edit_prefix):].strip()
+            if not user_prompt:
+                # 用户只发送了 @机器人 /p，提示正确的使用方法
+                tip = "欢迎使用flux-pro/kontext图片编辑！\n正确的编辑指令是：/p + 要编辑的提示词\n\n例如：\n/p 在图片中添加一个甜甜圈\n/p 把背景改成蓝色"
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                return False
+            
             key = self.get_waiting_key(message)
             self.waiting_edit[key] = {
                 "timestamp": time.time(),
                 "prompt": user_prompt,
                 "type": "edit_image"
             }
-            tip = f"💡已开启图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
+            tip = f"💡已开启flux-pro/kontext图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
@@ -192,13 +198,24 @@ class Falclient(PluginBase):
         if self.fal_edit_prefix in content:
             idx = content.find(self.fal_edit_prefix)
             user_prompt = content[idx + len(self.fal_edit_prefix):].strip()
+            if not user_prompt:
+                # 用户只发送了引用+/p，提示正确的使用方法
+                tip = "欢迎使用flux-pro/kontext图片编辑！\n正确的编辑指令是：/p + 要编辑的提示词\n\n例如：\n/p 在图片中添加一个甜甜圈\n/p 把背景改成蓝色"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False
+            
             key = self.get_waiting_key(message)
             self.waiting_edit[key] = {
                 "timestamp": time.time(),
                 "prompt": user_prompt,
                 "type": "edit_image"
             }
-            tip = f"💡已开启图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
+            tip = f"💡已开启flux-pro/kontext图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
@@ -417,7 +434,15 @@ class Falclient(PluginBase):
             idx = content.find(self.fal_edit_prefix)
             user_prompt = content[idx + len(self.fal_edit_prefix):].strip()
             if not user_prompt:
-                user_prompt = "编辑图片"
+                # 用户只发送了引用+/p，提示正确的使用方法
+                tip = "欢迎使用flux-pro/kontext图片编辑！\n正确的编辑指令是：/p + 要编辑的提示词\n\n例如：\n/p 在图片中添加一个甜甜圈\n/p 把背景改成蓝色"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False
 
             logger.info(f"Falclient (quote): 图片编辑任务，提示词: '{user_prompt}'")
 
