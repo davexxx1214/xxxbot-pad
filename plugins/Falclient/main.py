@@ -572,7 +572,15 @@ class Falclient(PluginBase):
             }
             data = {"prompt": prompt}
             logger.info(f"Falclient: 文生视频API请求 url={url} headers={headers} data={data}")
-            async with aiohttp.ClientSession() as session:
+            
+            # 设置超时配置 - 视频生成需要很长时间
+            timeout = aiohttp.ClientTimeout(
+                total=1800,  # 总超时时间30分钟
+                connect=30,  # 连接超时30秒
+                sock_read=1800  # 读取超时30分钟
+            )
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as resp:
                     logger.info(f"Falclient: 文生视频API响应状态: {resp.status}")
                     if resp.status == 200:
@@ -770,7 +778,14 @@ class Falclient(PluginBase):
                 video_tmp_path = self.get_tmp_video_path()
                 cover_path = None
                 try:
-                    async with aiohttp.ClientSession() as session:
+                    # 设置下载超时配置
+                    download_timeout = aiohttp.ClientTimeout(
+                        total=600,  # 总超时时间10分钟
+                        connect=30,  # 连接超时30秒
+                        sock_read=300  # 读取超时5分钟
+                    )
+                    
+                    async with aiohttp.ClientSession(timeout=download_timeout) as session:
                         async with session.get(video_url) as resp:
                             if resp.status == 200:
                                 content = await resp.read()
@@ -842,7 +857,14 @@ class Falclient(PluginBase):
         cover_path = None
         try:
             # 下载视频到本地临时文件
-            async with aiohttp.ClientSession() as session:
+            # 设置下载超时配置
+            download_timeout = aiohttp.ClientTimeout(
+                total=600,  # 总超时时间10分钟
+                connect=30,  # 连接超时30秒
+                sock_read=300  # 读取超时5分钟
+            )
+            
+            async with aiohttp.ClientSession(timeout=download_timeout) as session:
                 async with session.get(video_url) as resp:
                     if resp.status == 200:
                         content = await resp.read()
@@ -959,7 +981,14 @@ class Falclient(PluginBase):
                 try:
                     logger.info(f"尝试API端点: {api_url}")
                     
-                    async with aiohttp.ClientSession() as session:
+                    # 设置超时配置 - 图片生成可能需要一定时间
+                    timeout = aiohttp.ClientTimeout(
+                        total=300,  # 总超时时间5分钟
+                        connect=30,  # 连接超时30秒
+                        sock_read=300  # 读取超时5分钟
+                    )
+                    
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.post(api_url, json=json_param) as resp:
                             if resp.status == 404:
                                 logger.warning(f"端点不存在: {api_url}")
@@ -1088,7 +1117,14 @@ class Falclient(PluginBase):
         """下载图片并发送给用户"""
         try:
             import aiohttp
-            async with aiohttp.ClientSession() as session:
+            # 设置下载超时配置
+            download_timeout = aiohttp.ClientTimeout(
+                total=120,  # 总超时时间2分钟
+                connect=30,  # 连接超时30秒
+                sock_read=120  # 读取超时2分钟
+            )
+            
+            async with aiohttp.ClientSession(timeout=download_timeout) as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
                         image_data = await resp.read()
@@ -1140,7 +1176,14 @@ class Falclient(PluginBase):
             
             logger.info(f"[jimeng] API请求 url={url} headers={headers} data={data}")
             
-            async with aiohttp.ClientSession() as session:
+            # 设置超时配置 - 图片生成可能需要一定时间
+            timeout = aiohttp.ClientTimeout(
+                total=300,  # 总超时时间5分钟
+                connect=30,  # 连接超时30秒
+                sock_read=300  # 读取超时5分钟
+            )
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as resp:
                     logger.info(f"[jimeng] API响应状态: {resp.status}")
                     
