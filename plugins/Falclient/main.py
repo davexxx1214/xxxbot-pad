@@ -35,8 +35,10 @@ class Falclient(PluginBase):
             self.enable = plugin_config["enable"]
             self.fal_img_prefix = plugin_config.get("fal_img_prefix", "图生视频")
             self.fal_text_prefix = plugin_config.get("fal_text_prefix", "文生视频")
+            self.fal_edit_prefix = plugin_config.get("fal_edit_prefix", "/p")
             self.fal_kling_img_model = plugin_config.get("fal_kling_img_model", "kling-video/v2/master/image-to-video")
             self.fal_kling_text_model = plugin_config.get("fal_kling_text_model", "kling-video/v2/master/text-to-video")
+            self.fal_edit_model = plugin_config.get("fal_edit_model", "flux-pro/kontext")
             self.fal_api_key = plugin_config.get("fal_api_key", None)
             
             # 配置选项
@@ -55,6 +57,8 @@ class Falclient(PluginBase):
         
         # 记录待生成视频的状态: {user_or_group_id: timestamp}
         self.waiting_video = {}
+        # 新增：记录待编辑图片的状态: {user_or_group_id: {timestamp, prompt, type}}
+        self.waiting_edit = {}
         self.image_msgid_cache = set()
         self.image_cache_timeout = 60
         self.image_cache = {}
@@ -126,25 +130,21 @@ class Falclient(PluginBase):
             await self.handle_text2video(bot, message, user_prompt)
             return False
         
-        # 添加调试命令
-        if content.startswith("测试视频发送"):
-            if self.debug_mode:
-                # 创建一个测试视频URL（使用最近成功的URL）
-                test_url = "https://v3.fal.media/files/tiger/albVXs7mcha3swmTzNFt6_output.mp4"
-                notice = "开始测试视频发送功能..."
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], notice)
-                await self.send_video_url(bot, message, test_url)
-                return False
+        # 新增：图片编辑
+        if content.startswith(self.fal_edit_prefix):
+            user_prompt = content[len(self.fal_edit_prefix):].strip()
+            key = self.get_waiting_key(message)
+            self.waiting_edit[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt,
+                "type": "edit_image"
+            }
+            tip = f"💡已开启图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
-                tip = "调试模式未启用，无法使用测试命令"
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], tip)
-                return False
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False
         
         return True
 
@@ -187,6 +187,24 @@ class Falclient(PluginBase):
                 await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_text2video(bot, message, user_prompt)
             return False
+        
+        # 新增：图片编辑
+        if self.fal_edit_prefix in content:
+            idx = content.find(self.fal_edit_prefix)
+            user_prompt = content[idx + len(self.fal_edit_prefix):].strip()
+            key = self.get_waiting_key(message)
+            self.waiting_edit[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt,
+                "type": "edit_image"
+            }
+            tip = f"💡已开启图片编辑模式，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + (user_prompt or "编辑图片")
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False
+        
         return True
 
     @on_image_message(priority=30)
@@ -199,11 +217,27 @@ class Falclient(PluginBase):
         xml_content = message.get("Content")
         if not msg_id or msg_id in self.image_msgid_cache:
             return True
+        
         key = self.get_waiting_key(message)
-        waiting_info = self.waiting_video.get(key)
-        if not waiting_info or waiting_info.get("type") != "img2video":
+        
+        # 检查图生视频任务
+        waiting_video_info = self.waiting_video.get(key)
+        # 检查图片编辑任务
+        waiting_edit_info = self.waiting_edit.get(key)
+        
+        if not waiting_video_info and not waiting_edit_info:
             return True
-        user_prompt = waiting_info.get("prompt", "")
+        
+        # 确定任务类型
+        if waiting_video_info and waiting_video_info.get("type") == "img2video":
+            task_type = "img2video"
+            user_prompt = waiting_video_info.get("prompt", "")
+        elif waiting_edit_info and waiting_edit_info.get("type") == "edit_image":
+            task_type = "edit_image"
+            user_prompt = waiting_edit_info.get("prompt", "")
+        else:
+            return True
+        
         image_bytes = b""
         if isinstance(xml_content, str) and "<img " in xml_content:
             import xml.etree.ElementTree as ET
@@ -232,15 +266,21 @@ class Falclient(PluginBase):
                     image_bytes = base64.b64decode(xml_content)
             except Exception as e:
                 logger.warning(f"Falclient: base64解码失败: {e}")
+        
         if image_bytes and len(image_bytes) > 0:
-            await self.handle_img2video(bot, message, image_bytes, user_prompt)
-        self.waiting_video.pop(key, None)
+            if task_type == "img2video":
+                await self.handle_img2video(bot, message, image_bytes, user_prompt)
+                self.waiting_video.pop(key, None)
+            elif task_type == "edit_image":
+                await self.handle_edit_image(bot, message, image_bytes, user_prompt)
+                self.waiting_edit.pop(key, None)
+        
         self.image_msgid_cache.add(msg_id)
         return False
 
     @on_quote_message(priority=31)
-    async def handle_quote_img2video(self, bot, message: dict):
-        """处理引用图片进行图生视频"""
+    async def handle_quote_tasks(self, bot, message: dict):
+        """处理引用图片进行各种任务（图生视频、文生视频、图片编辑）"""
         if not self.enable:
             return True
 
@@ -256,14 +296,15 @@ class Falclient(PluginBase):
         if not (quote_info.get("MsgType") == 3):
             return True
 
-        # 检查是否包含图生视频前缀
+        # 检查是否包含各种前缀
         is_img2video_task = self.fal_img_prefix in content
         is_text2video_task = self.fal_text_prefix in content
+        is_edit_task = self.fal_edit_prefix in content
 
-        if not (is_img2video_task or is_text2video_task):
+        if not (is_img2video_task or is_text2video_task or is_edit_task):
             return True
 
-        logger.info(f"Falclient (quote): 检测到引用图片的视频生成请求，MsgId: {current_msg_id}")
+        logger.info(f"Falclient (quote): 检测到引用图片的任务请求，MsgId: {current_msg_id}")
 
         # 处理文生视频（引用图片但使用文生视频指令）
         if is_text2video_task:
@@ -363,6 +404,86 @@ class Falclient(PluginBase):
             else:
                 logger.warning(f"Falclient (quote): 未能从引用获取有效图片数据 (MD5: {md5})")
                 reply_content = "未能从本地获取引用的图片数据，无法进行图生视频。请确保图片最近已发送过。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], reply_content)
+                if current_msg_id:
+                    self.image_msgid_cache.add(current_msg_id)
+                return False
+
+        # 新增：处理图片编辑
+        if is_edit_task:
+            idx = content.find(self.fal_edit_prefix)
+            user_prompt = content[idx + len(self.fal_edit_prefix):].strip()
+            if not user_prompt:
+                user_prompt = "编辑图片"
+
+            logger.info(f"Falclient (quote): 图片编辑任务，提示词: '{user_prompt}'")
+
+            # 从引用的XML中提取图片
+            quoted_xml_content = quote_info.get("Content")
+            if not quoted_xml_content:
+                logger.warning(f"Falclient (quote): 引用消息缺少XML内容，MsgId: {current_msg_id}")
+                return True
+
+            image_bytes = b""
+            md5 = None
+            import xml.etree.ElementTree as ET
+            try:
+                root = ET.fromstring(quoted_xml_content)
+                img_elem = root.find("img")
+                if img_elem is not None:
+                    md5 = img_elem.get("md5")
+                    length_str = img_elem.get("length", "0")
+                    logger.info(f"Falclient (quote): 解析引用图片XML: md5={md5}, length={length_str}")
+                    
+                    if md5:
+                        image_bytes = await self.find_image_by_md5(md5)
+                        if image_bytes:
+                            logger.info(f"Falclient (quote): 通过MD5找到图片: {md5}, 大小: {len(image_bytes)} 字节")
+                        else:
+                            logger.warning(f"Falclient (quote): 未找到MD5为 {md5} 的图片")
+                    else:
+                        logger.warning(f"Falclient (quote): 引用图片XML中未找到MD5")
+                else:
+                    logger.warning(f"Falclient (quote): 引用XML中没有<img>元素，MsgId: {current_msg_id}")
+            except Exception as e:
+                logger.error(f"Falclient (quote): 解析引用XML或查找图片失败，MsgId: {current_msg_id}: {e}")
+                image_bytes = b""
+
+            if image_bytes and len(image_bytes) > 0:
+                try:
+                    # 验证图片
+                    from PIL import Image
+                    Image.open(io.BytesIO(image_bytes))
+                    logger.info(f"Falclient (quote): 引用图片 (MD5: {md5}) 验证通过，开始图片编辑")
+
+                    # 清除可能存在的等待状态
+                    key_to_clear = self.get_waiting_key(message)
+                    if key_to_clear in self.waiting_edit:
+                        self.waiting_edit.pop(key_to_clear, None)
+                        logger.info(f"Falclient (quote): 清除用户 {key_to_clear} 的图片编辑等待状态")
+
+                    # 处理图片编辑
+                    await self.handle_edit_image(bot, message, image_bytes, user_prompt)
+
+                    if current_msg_id:
+                        self.image_msgid_cache.add(current_msg_id)
+                    return False
+                except Exception as e:
+                    logger.error(f"Falclient (quote): 引用图片 (MD5: {md5}) 编辑失败: {e}")
+                    reply_content = f"处理引用的图片时出错，无法完成图片编辑操作"
+                    if message["IsGroup"]:
+                        await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], reply_content)
+                    if current_msg_id:
+                        self.image_msgid_cache.add(current_msg_id)
+                    return False
+            else:
+                logger.warning(f"Falclient (quote): 未能从引用获取有效图片数据 (MD5: {md5})")
+                reply_content = "未能从本地获取引用的图片数据，无法进行图片编辑。请确保图片最近已发送过。"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
                 else:
@@ -805,3 +926,123 @@ class Falclient(PluginBase):
         except Exception as e:
             logger.error(f"自定义视频发送失败: {e}")
             raise e
+
+    async def handle_edit_image(self, bot, message, image_bytes, prompt):
+        """处理图片编辑任务，调用fal-ai/flux-pro/kontext模型"""
+        import tempfile
+        logger.info(f"[edit_image] 开始处理图片编辑任务，提示词: {prompt}")
+        
+        # 添加请求已收到的提示
+        notice = "您的图片编辑请求已经收到，请稍候..."
+        if message.get("IsGroup"):
+            await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], notice)
+        
+        tmp_file_path = None
+        try:
+            # 保存图片到临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                tmp_file.write(image_bytes)
+                tmp_file_path = tmp_file.name
+
+            # 使用fal_client上传图片并调用编辑API
+            client = fal_client.SyncClient(key=self.fal_api_key)
+            image_url = client.upload_file(tmp_file_path)
+            if not image_url:
+                await self.send_edit_error(bot, message, "图片上传失败")
+                return
+
+            logger.info(f"[edit_image] 图片上传成功: {image_url}")
+
+            # 定义队列更新回调函数（可选）
+            def on_queue_update(update):
+                if isinstance(update, fal_client.InProgress):
+                    for log in update.logs:
+                        logger.info(f"[edit_image] 队列日志: {log.get('message', '')}")
+
+            # 调用flux-pro/kontext模型进行图片编辑
+            result = client.subscribe(
+                f"fal-ai/{self.fal_edit_model}",
+                arguments={
+                    "prompt": prompt,
+                    "image_url": image_url
+                },
+                with_logs=True,
+                on_queue_update=on_queue_update
+            )
+            
+            logger.info(f"[edit_image] API响应: {result}")
+            
+            # 处理返回结果
+            if isinstance(result, dict):
+                # 检查是否有images字段（数组格式）
+                if "images" in result and isinstance(result["images"], list) and len(result["images"]) > 0:
+                    edited_image_url = result["images"][0].get("url")
+                    if edited_image_url and edited_image_url.startswith("http"):
+                        await self.download_and_send_image(bot, message, edited_image_url, "图片编辑")
+                        return
+                
+                # 检查是否有image字段（单个对象格式）
+                elif "image" in result and isinstance(result["image"], dict):
+                    edited_image_url = result["image"].get("url")
+                    if edited_image_url and edited_image_url.startswith("http"):
+                        await self.download_and_send_image(bot, message, edited_image_url, "图片编辑")
+                        return
+                
+                # 检查是否直接返回了url字段
+                elif "url" in result:
+                    edited_image_url = result["url"]
+                    if edited_image_url and edited_image_url.startswith("http"):
+                        await self.download_and_send_image(bot, message, edited_image_url, "图片编辑")
+                        return
+            
+            # 如果上述格式都不匹配，记录完整响应并报错
+            logger.error(f"[edit_image] 未能从API响应中获取图片URL，完整响应: {result}")
+            await self.send_edit_error(bot, message, "API返回的响应格式不正确，未找到编辑后的图片")
+            
+        except Exception as e:
+            logger.error(f"[edit_image] 图片编辑API调用异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            await self.send_edit_error(bot, message, f"图片编辑服务出错: {str(e)}")
+        finally:
+            # 删除临时文件
+            if tmp_file_path and os.path.exists(tmp_file_path):
+                try:
+                    os.remove(tmp_file_path)
+                    logger.info(f"[edit_image] 临时文件已删除: {tmp_file_path}")
+                except Exception as e_rem:
+                    logger.warning(f"[edit_image] 删除临时文件失败: {tmp_file_path}, error: {e_rem}")
+
+    async def download_and_send_image(self, bot, message, image_url, task_name="图片处理"):
+        """下载图片并发送给用户"""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status == 200:
+                        image_data = await resp.read()
+                        logger.info(f"[{task_name}] 图片下载成功，大小: {len(image_data)} 字节")
+                        
+                        # 发送图片
+                        if message.get("IsGroup"):
+                            await bot.send_image_message(message["FromWxid"], image_data)
+                            await bot.send_at_message(message["FromWxid"], f"🖼️ 您的{task_name}已完成！", [message["SenderWxid"]])
+                        else:
+                            await bot.send_image_message(message["FromWxid"], image_data)
+                        return True
+                    else:
+                        raise Exception(f"图片下载失败，状态码: {resp.status}")
+        except Exception as e:
+            logger.error(f"[{task_name}] 图片下载或发送失败: {e}")
+            await self.send_edit_error(bot, message, f"{task_name}完成但图片下载失败: {str(e)}")
+            return False
+
+    async def send_edit_error(self, bot, message, error_msg):
+        """发送图片编辑错误消息"""
+        full_error = f"图片编辑失败：{error_msg}"
+        if message.get("IsGroup"):
+            await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], full_error)
