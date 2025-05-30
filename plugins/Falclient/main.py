@@ -111,7 +111,7 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "type": "img2video"
             }
-            tip = f"💡已开启图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
+            tip = f"💡已开启kling2.1图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
@@ -169,7 +169,7 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "type": "img2video"
             }
-            tip = f"💡已开启图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
+            tip = f"💡已开启kling2.1图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
