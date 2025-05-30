@@ -1053,7 +1053,6 @@ class Falclient(PluginBase):
                         # 发送图片
                         if message.get("IsGroup"):
                             await bot.send_image_message(message["FromWxid"], image_data)
-                            await bot.send_at_message(message["FromWxid"], f"🖼️ 您的{task_name}已完成！", [message["SenderWxid"]])
                         else:
                             await bot.send_image_message(message["FromWxid"], image_data)
                         return True
