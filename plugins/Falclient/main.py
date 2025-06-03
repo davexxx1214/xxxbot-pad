@@ -37,11 +37,6 @@ class Falclient(PluginBase):
             self.fal_text_prefix = plugin_config.get("fal_text_prefix", "文生视频")
             self.fal_edit_prefix = plugin_config.get("fal_edit_prefix", "/p")
             self.jimeng_prefix = plugin_config.get("jimeng_prefix", "jimeng")
-            # 新增：多图编辑配置
-            self.fal_multi_edit_prefix = plugin_config.get("fal_multi_edit_prefix", "/b")
-            self.fal_multi_edit_end = plugin_config.get("fal_multi_edit_end", "/e")
-            self.fal_multi_edit_model = plugin_config.get("fal_multi_edit_model", "flux-pro/kontext/max/multi")
-            
             self.fal_kling_img_model = plugin_config.get("fal_kling_img_model", "kling-video/v2/master/image-to-video")
             self.fal_kling_text_model = plugin_config.get("fal_kling_text_model", "kling-video/v2/master/text-to-video")
             self.fal_edit_model = plugin_config.get("fal_edit_model", "flux-pro/kontext")
@@ -67,8 +62,6 @@ class Falclient(PluginBase):
         self.waiting_video = {}
         # 新增：记录待编辑图片的状态: {user_or_group_id: {timestamp, prompt, type}}
         self.waiting_edit = {}
-        # 新增：记录多图编辑状态: {user_or_group_id: {timestamp, prompt, images}}
-        self.waiting_multi_edit = {}
         self.image_msgid_cache = set()
         self.image_cache_timeout = 60
         self.image_cache = {}
@@ -182,66 +175,6 @@ class Falclient(PluginBase):
             await self.handle_jimeng_service(bot, message, user_prompt)
             return False
         
-        # 新增：多图编辑功能
-        if content.startswith(self.fal_multi_edit_prefix):
-            user_prompt = content[len(self.fal_multi_edit_prefix):].strip()
-            logger.info(f"Falclient [text]: 接收到多图编辑指令，提示词: '{user_prompt}'")
-            if not user_prompt:
-                tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.fal_multi_edit_prefix} + 空格 + 编辑描述\n例如：{self.fal_multi_edit_prefix} 把小鸭子放在女人的T恤上"
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], tip)
-                return False
-            
-            key = self.get_waiting_key(message)
-            # 清理之前的状态（如果存在）
-            self.waiting_multi_edit[key] = {
-                "timestamp": time.time(),
-                "prompt": user_prompt,
-                "images": []
-            }
-            logger.info(f"Falclient [text]: 已存储用户 {key} 的多图编辑状态，提示词: '{user_prompt}'")
-            tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.fal_multi_edit_end}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
-            if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-            else:
-                await bot.send_text_message(message["FromWxid"], tip)
-            return False
-        
-        # 新增：结束多图编辑模式
-        if content.startswith(self.fal_multi_edit_end):
-            key = self.get_waiting_key(message)
-            waiting_multi_info = self.waiting_multi_edit.get(key)
-            logger.info(f"Falclient [text]: 接收到结束编辑指令，用户 {key}，等待状态: {waiting_multi_info}")
-            if waiting_multi_info:
-                images = waiting_multi_info.get("images", [])
-                prompt = waiting_multi_info.get("prompt", "编辑图片")
-                logger.info(f"Falclient [text]: 准备开始多图编辑，提示词: '{prompt}'，图片数量: {len(images)}")
-                if len(images) >= 2:
-                    logger.info(f"Falclient: 开始多图编辑，用户 {key}，{len(images)} 张图片")
-                    # 先回复收到请求
-                    notice = "您的多图编辑请求已经收到，请稍候..."
-                    if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
-                    else:
-                        await bot.send_text_message(message["FromWxid"], notice)
-                    
-                    await self.handle_multi_edit(bot, message, images, prompt)
-                    # 清理状态
-                    self.waiting_multi_edit.pop(key, None)
-                else:
-                    tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
-                    if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                    else:
-                        await bot.send_text_message(message["FromWxid"], tip)
-            else:
-                # 用户不在多图编辑模式，忽略 /e
-                logger.info(f"Falclient [text]: 用户 {key} 不在多图编辑模式，忽略 /e 指令")
-                pass
-            return False
-        
         return True
 
     @on_at_message(priority=30)
@@ -333,67 +266,6 @@ class Falclient(PluginBase):
             await self.handle_jimeng_service(bot, message, user_prompt)
             return False
         
-        # 新增：多图编辑功能
-        if self.fal_multi_edit_prefix in content:
-            idx = content.find(self.fal_multi_edit_prefix)
-            user_prompt = content[idx + len(self.fal_multi_edit_prefix):].strip()
-            logger.info(f"Falclient [at]: 接收到多图编辑指令，提示词: '{user_prompt}'")
-            if not user_prompt:
-                tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.fal_multi_edit_prefix} + 空格 + 编辑描述\n例如：{self.fal_multi_edit_prefix} 把小鸭子放在女人的T恤上"
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], tip)
-                return False
-            
-            key = self.get_waiting_key(message)
-            # 清理之前的状态（如果存在）
-            self.waiting_multi_edit[key] = {
-                "timestamp": time.time(),
-                "prompt": user_prompt,
-                "images": []
-            }
-            logger.info(f"Falclient [at]: 已存储用户 {key} 的多图编辑状态，提示词: '{user_prompt}'")
-            tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.fal_multi_edit_end}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
-            if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-            else:
-                await bot.send_text_message(message["FromWxid"], tip)
-            return False
-        
-        # 新增：结束多图编辑模式
-        if self.fal_multi_edit_end in content:
-            key = self.get_waiting_key(message)
-            waiting_multi_info = self.waiting_multi_edit.get(key)
-            logger.info(f"Falclient [at]: 接收到结束编辑指令，用户 {key}，等待状态: {waiting_multi_info}")
-            if waiting_multi_info:
-                images = waiting_multi_info.get("images", [])
-                prompt = waiting_multi_info.get("prompt", "编辑图片")
-                logger.info(f"Falclient [at]: 准备开始多图编辑，提示词: '{prompt}'，图片数量: {len(images)}")
-                if len(images) >= 2:
-                    logger.info(f"Falclient: 开始多图编辑，用户 {key}，{len(images)} 张图片")
-                    # 先回复收到请求
-                    notice = "您的多图编辑请求已经收到，请稍候..."
-                    if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
-                    else:
-                        await bot.send_text_message(message["FromWxid"], notice)
-                    
-                    await self.handle_multi_edit(bot, message, images, prompt)
-                    # 清理状态
-                    self.waiting_multi_edit.pop(key, None)
-                else:
-                    tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
-                    if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                    else:
-                        await bot.send_text_message(message["FromWxid"], tip)
-            else:
-                # 用户不在多图编辑模式，忽略 /e
-                logger.info(f"Falclient [at]: 用户 {key} 不在多图编辑模式，忽略 /e 指令")
-                pass
-            return False
-        
         return True
 
     @on_image_message(priority=30)
@@ -413,62 +285,9 @@ class Falclient(PluginBase):
         waiting_video_info = self.waiting_video.get(key)
         # 检查图片编辑任务
         waiting_edit_info = self.waiting_edit.get(key)
-        # 新增：检查多图编辑任务
-        waiting_multi_edit_info = self.waiting_multi_edit.get(key)
         
-        if not waiting_video_info and not waiting_edit_info and not waiting_multi_edit_info:
+        if not waiting_video_info and not waiting_edit_info:
             return True
-        
-        # 新增：处理多图编辑模式下的图片收集
-        if waiting_multi_edit_info:
-            # 获取图片数据
-            image_bytes = b""
-            if isinstance(xml_content, str) and "<img " in xml_content:
-                import xml.etree.ElementTree as ET
-                try:
-                    root = ET.fromstring(xml_content)
-                    img_elem = root.find("img")
-                    if img_elem is not None:
-                        length = int(img_elem.get("length", "0"))
-                        if length and msg_id:
-                            chunk_size = 65536
-                            chunks = (length + chunk_size - 1) // chunk_size
-                            for i in range(chunks):
-                                start_pos = i * chunk_size
-                                try:
-                                    chunk = await bot.get_msg_image(msg_id, from_wxid, length, start_pos=start_pos)
-                                    if chunk:
-                                        image_bytes += chunk
-                                except Exception as e:
-                                    logger.error(f"Falclient: 下载第 {i+1}/{chunks} 段时出错: {e}")
-                except Exception as e:
-                    logger.warning(f"Falclient: 解析图片XML失败: {e}")
-            elif isinstance(xml_content, str):
-                try:
-                    if len(xml_content) > 100 and not xml_content.strip().startswith("<?xml"):
-                        import base64
-                        image_bytes = base64.b64decode(xml_content)
-                except Exception as e:
-                    logger.warning(f"Falclient: base64解码失败: {e}")
-            
-            if image_bytes and len(image_bytes) > 0:
-                # 将图片保存到临时文件
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                    tmp_file.write(image_bytes)
-                    tmp_file_path = tmp_file.name
-                
-                # 将图片路径添加到多图编辑状态中
-                self.waiting_multi_edit[key]["images"].append(tmp_file_path)
-                num_images = len(self.waiting_multi_edit[key]["images"])
-                tip = f"✅ 已收到第 {num_images} 张图片。\n请继续发送图片，或发送 '{self.fal_multi_edit_end}' 开始多图编辑。"
-                if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                else:
-                    await bot.send_text_message(message["FromWxid"], tip)
-                
-                self.image_msgid_cache.add(msg_id)
-                return False
         
         # 确定任务类型
         if waiting_video_info and waiting_video_info.get("type") == "img2video":
@@ -1403,115 +1222,6 @@ class Falclient(PluginBase):
     async def send_jimeng_error(self, bot, message, error_msg):
         """发送即梦AI绘图错误消息"""
         full_error = f"即梦AI绘图失败：{error_msg}"
-        if message.get("IsGroup"):
-            await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
-        else:
-            await bot.send_text_message(message["FromWxid"], full_error)
-
-    async def handle_multi_edit(self, bot, message, image_paths, prompt):
-        """处理多图编辑任务，调用fal-ai/flux-pro/kontext/max/multi模型"""
-        logger.info(f"[multi_edit] 开始处理多图编辑任务，提示词: {prompt}，图片数量: {len(image_paths)}")
-        
-        tmp_files = []
-        try:
-            # 使用fal_client上传所有图片并调用多图编辑API
-            client = fal_client.SyncClient(key=self.fal_api_key)
-            
-            # 上传所有图片并获取URL
-            image_urls = []
-            for i, image_path in enumerate(image_paths):
-                try:
-                    logger.info(f"[multi_edit] 上传第 {i+1} 张图片: {image_path}")
-                    image_url = client.upload_file(image_path)
-                    if image_url:
-                        image_urls.append(image_url)
-                        logger.info(f"[multi_edit] 第 {i+1} 张图片上传成功: {image_url}")
-                    else:
-                        raise Exception(f"第 {i+1} 张图片上传失败")
-                except Exception as e:
-                    logger.error(f"[multi_edit] 上传第 {i+1} 张图片失败: {e}")
-                    await self.send_multi_edit_error(bot, message, f"上传第 {i+1} 张图片失败: {str(e)}")
-                    return
-            
-            if len(image_urls) < 2:
-                await self.send_multi_edit_error(bot, message, "至少需要2张图片才能进行多图编辑")
-                return
-
-            logger.info(f"[multi_edit] 所有图片上传成功，开始调用API")
-            logger.info(f"[multi_edit] 使用的提示词: '{prompt}'")
-            logger.info(f"[multi_edit] 图片URL数量: {len(image_urls)}")
-
-            # 定义队列更新回调函数（可选）
-            def on_queue_update(update):
-                if isinstance(update, fal_client.InProgress):
-                    for log in update.logs:
-                        logger.info(f"[multi_edit] 队列日志: {log.get('message', '')}")
-
-            # 调用flux-pro/kontext/max/multi模型进行多图编辑
-            api_arguments = {
-                "prompt": prompt,
-                "guidance_scale": 3.5,
-                "num_images": 1,
-                "safety_tolerance": "2",
-                "output_format": "jpeg",
-                "image_urls": image_urls
-            }
-            logger.info(f"[multi_edit] API调用参数: {api_arguments}")
-            
-            result = client.subscribe(
-                f"fal-ai/{self.fal_multi_edit_model}",
-                arguments=api_arguments,
-                with_logs=True,
-                on_queue_update=on_queue_update
-            )
-            
-            logger.info(f"[multi_edit] API响应: {result}")
-            
-            # 处理返回结果
-            if isinstance(result, dict):
-                # 检查是否有images字段（数组格式）
-                if "images" in result and isinstance(result["images"], list) and len(result["images"]) > 0:
-                    edited_image_url = result["images"][0].get("url")
-                    if edited_image_url and edited_image_url.startswith("http"):
-                        await self.download_and_send_image(bot, message, edited_image_url, "多图编辑")
-                        return
-                
-                # 检查是否有image字段（单个对象格式）
-                elif "image" in result and isinstance(result["image"], dict):
-                    edited_image_url = result["image"].get("url")
-                    if edited_image_url and edited_image_url.startswith("http"):
-                        await self.download_and_send_image(bot, message, edited_image_url, "多图编辑")
-                        return
-                
-                # 检查是否直接返回了url字段
-                elif "url" in result:
-                    edited_image_url = result["url"]
-                    if edited_image_url and edited_image_url.startswith("http"):
-                        await self.download_and_send_image(bot, message, edited_image_url, "多图编辑")
-                        return
-            
-            # 如果上述格式都不匹配，记录完整响应并报错
-            logger.error(f"[multi_edit] 未能从API响应中获取图片URL，完整响应: {result}")
-            await self.send_multi_edit_error(bot, message, "API返回的响应格式不正确，未找到编辑后的图片")
-            
-        except Exception as e:
-            logger.error(f"[multi_edit] 多图编辑API调用异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            await self.send_multi_edit_error(bot, message, f"多图编辑服务出错: {str(e)}")
-        finally:
-            # 删除临时文件
-            for tmp_file_path in image_paths:
-                try:
-                    if os.path.exists(tmp_file_path):
-                        os.remove(tmp_file_path)
-                        logger.info(f"[multi_edit] 临时文件已删除: {tmp_file_path}")
-                except Exception as e_rem:
-                    logger.warning(f"[multi_edit] 删除临时文件失败: {tmp_file_path}, error: {e_rem}")
-
-    async def send_multi_edit_error(self, bot, message, error_msg):
-        """发送多图编辑错误消息"""
-        full_error = f"多图编辑失败：{error_msg}"
         if message.get("IsGroup"):
             await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
         else:
