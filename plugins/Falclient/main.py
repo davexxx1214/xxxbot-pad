@@ -185,6 +185,7 @@ class Falclient(PluginBase):
         # 新增：多图编辑功能
         if content.startswith(self.fal_multi_edit_prefix):
             user_prompt = content[len(self.fal_multi_edit_prefix):].strip()
+            logger.info(f"Falclient [text]: 接收到多图编辑指令，提示词: '{user_prompt}'")
             if not user_prompt:
                 tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.fal_multi_edit_prefix} + 空格 + 编辑描述\n例如：{self.fal_multi_edit_prefix} 把小鸭子放在女人的T恤上"
                 if message["IsGroup"]:
@@ -200,6 +201,7 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "images": []
             }
+            logger.info(f"Falclient [text]: 已存储用户 {key} 的多图编辑状态，提示词: '{user_prompt}'")
             tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.fal_multi_edit_end}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
@@ -211,9 +213,11 @@ class Falclient(PluginBase):
         if content.startswith(self.fal_multi_edit_end):
             key = self.get_waiting_key(message)
             waiting_multi_info = self.waiting_multi_edit.get(key)
+            logger.info(f"Falclient [text]: 接收到结束编辑指令，用户 {key}，等待状态: {waiting_multi_info}")
             if waiting_multi_info:
                 images = waiting_multi_info.get("images", [])
                 prompt = waiting_multi_info.get("prompt", "编辑图片")
+                logger.info(f"Falclient [text]: 准备开始多图编辑，提示词: '{prompt}'，图片数量: {len(images)}")
                 if len(images) >= 2:
                     logger.info(f"Falclient: 开始多图编辑，用户 {key}，{len(images)} 张图片")
                     # 先回复收到请求
@@ -234,6 +238,7 @@ class Falclient(PluginBase):
                         await bot.send_text_message(message["FromWxid"], tip)
             else:
                 # 用户不在多图编辑模式，忽略 /e
+                logger.info(f"Falclient [text]: 用户 {key} 不在多图编辑模式，忽略 /e 指令")
                 pass
             return False
         
@@ -332,6 +337,7 @@ class Falclient(PluginBase):
         if self.fal_multi_edit_prefix in content:
             idx = content.find(self.fal_multi_edit_prefix)
             user_prompt = content[idx + len(self.fal_multi_edit_prefix):].strip()
+            logger.info(f"Falclient [at]: 接收到多图编辑指令，提示词: '{user_prompt}'")
             if not user_prompt:
                 tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.fal_multi_edit_prefix} + 空格 + 编辑描述\n例如：{self.fal_multi_edit_prefix} 把小鸭子放在女人的T恤上"
                 if message["IsGroup"]:
@@ -347,6 +353,7 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "images": []
             }
+            logger.info(f"Falclient [at]: 已存储用户 {key} 的多图编辑状态，提示词: '{user_prompt}'")
             tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.fal_multi_edit_end}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
@@ -358,9 +365,11 @@ class Falclient(PluginBase):
         if self.fal_multi_edit_end in content:
             key = self.get_waiting_key(message)
             waiting_multi_info = self.waiting_multi_edit.get(key)
+            logger.info(f"Falclient [at]: 接收到结束编辑指令，用户 {key}，等待状态: {waiting_multi_info}")
             if waiting_multi_info:
                 images = waiting_multi_info.get("images", [])
                 prompt = waiting_multi_info.get("prompt", "编辑图片")
+                logger.info(f"Falclient [at]: 准备开始多图编辑，提示词: '{prompt}'，图片数量: {len(images)}")
                 if len(images) >= 2:
                     logger.info(f"Falclient: 开始多图编辑，用户 {key}，{len(images)} 张图片")
                     # 先回复收到请求
@@ -381,6 +390,7 @@ class Falclient(PluginBase):
                         await bot.send_text_message(message["FromWxid"], tip)
             else:
                 # 用户不在多图编辑模式，忽略 /e
+                logger.info(f"Falclient [at]: 用户 {key} 不在多图编辑模式，忽略 /e 指令")
                 pass
             return False
         
@@ -1428,6 +1438,8 @@ class Falclient(PluginBase):
                 return
 
             logger.info(f"[multi_edit] 所有图片上传成功，开始调用API")
+            logger.info(f"[multi_edit] 使用的提示词: '{prompt}'")
+            logger.info(f"[multi_edit] 图片URL数量: {len(image_urls)}")
 
             # 定义队列更新回调函数（可选）
             def on_queue_update(update):
@@ -1436,16 +1448,19 @@ class Falclient(PluginBase):
                         logger.info(f"[multi_edit] 队列日志: {log.get('message', '')}")
 
             # 调用flux-pro/kontext/max/multi模型进行多图编辑
+            api_arguments = {
+                "prompt": prompt,
+                "guidance_scale": 3.5,
+                "num_images": 1,
+                "safety_tolerance": "2",
+                "output_format": "jpeg",
+                "image_urls": image_urls
+            }
+            logger.info(f"[multi_edit] API调用参数: {api_arguments}")
+            
             result = client.subscribe(
                 f"fal-ai/{self.fal_multi_edit_model}",
-                arguments={
-                    "prompt": prompt,
-                    "guidance_scale": 3.5,
-                    "num_images": 1,
-                    "safety_tolerance": "5",
-                    "output_format": "jpeg",
-                    "image_urls": image_urls
-                },
+                arguments=api_arguments,
                 with_logs=True,
                 on_queue_update=on_queue_update
             )
