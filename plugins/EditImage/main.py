@@ -21,9 +21,9 @@ from google.generativeai import types as genai_types
 
 
 class EditImage(PluginBase):
-    description = "垫图和修图插件" # 修改描述
+    description = "垫图、修图和多图编辑插件" # 修改描述
     author = "老夏"
-    version = "1.0.1" # 修改版本
+    version = "1.1.0" # 修改版本
     is_ai_platform = False
 
     def __init__(self):
@@ -46,6 +46,10 @@ class EditImage(PluginBase):
             self.google_api_key = plugin_config.get("google_api_key", None)
             self.gemini_model_name = plugin_config.get("gemini_model_name", "models/gemini-pro-vision") # 默认使用 vision
 
+            # 新增：多图编辑配置
+            self.blend_prefix = plugin_config.get("blend_prefix", "/b")
+            self.end_prefix = plugin_config.get("end_prefix", "/e")
+
         except Exception as e:
             logger.error(f"加载垫图/修图插件配置文件失败: {e}") # 修改日志
             raise
@@ -53,6 +57,8 @@ class EditImage(PluginBase):
         self.waiting_edit_image = {}
         # 新增：记录待修图状态
         self.waiting_inpaint_image = {}
+        # 新增：记录多图编辑状态: {user_or_group_id: {timestamp, prompt, images}}
+        self.waiting_blend = {}
 
         # 图片缓存，防止重复处理
         self.image_msgid_cache = set()
@@ -150,6 +156,56 @@ class EditImage(PluginBase):
                 await bot.send_text_message(message["FromWxid"], tip)
             return False
             
+        # 新增：多图编辑功能
+        if content.startswith(self.blend_prefix):
+            user_prompt = content[len(self.blend_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.blend_prefix} + 空格 + 图片描述\n\n📝 示例：\n{self.blend_prefix} 把两只猫融合在一起\n{self.blend_prefix} 将第一张图的人物放到第二张图的背景中"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
+            
+            # 清理之前的状态（如果存在）
+            self.waiting_blend[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt,
+                "images": []
+            }
+            tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.end_prefix}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            return False
+        
+        # 新增：结束多图编辑模式
+        if content.startswith(self.end_prefix):
+            waiting_blend_info = self.waiting_blend.get(key)
+            if waiting_blend_info:
+                images = waiting_blend_info.get("images", [])
+                prompt = waiting_blend_info.get("prompt", "多图编辑")
+                if len(images) >= 2:
+                    logger.info(f"EditImage: 开始多图编辑，用户 {key}，{len(images)} 张图片")
+                    # 先回复收到请求
+                    notice = "您的多图编辑请求已经收到，请稍候..."
+                    if message["IsGroup"]:
+                        await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], notice)
+                    
+                    await self.handle_blend_service(images, prompt, message, bot)
+                    # 清理状态
+                    self.waiting_blend.pop(key, None)
+                else:
+                    tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
+                    if message["IsGroup"]:
+                        await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], tip)
+            return False
+            
         return True
 
     @on_at_message(priority=30)
@@ -197,6 +253,45 @@ class EditImage(PluginBase):
                 del self.waiting_edit_image[key]
             tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
             await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            return False
+            
+        # 新增：多图编辑功能
+        if self.blend_prefix in cleaned_content:
+            idx = cleaned_content.find(self.blend_prefix)
+            user_prompt = cleaned_content[idx + len(self.blend_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.blend_prefix} + 空格 + 图片描述\n\n📝 示例：\n{self.blend_prefix} 把两只猫融合在一起\n{self.blend_prefix} 将第一张图的人物放到第二张图的背景中"
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                return False
+            
+            # 清理之前的状态（如果存在）
+            self.waiting_blend[key] = {
+                "timestamp": time.time(),
+                "prompt": user_prompt,
+                "images": []
+            }
+            tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.end_prefix}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
+            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            return False
+        
+        # 新增：结束多图编辑模式
+        if self.end_prefix in cleaned_content:
+            waiting_blend_info = self.waiting_blend.get(key)
+            if waiting_blend_info:
+                images = waiting_blend_info.get("images", [])
+                prompt = waiting_blend_info.get("prompt", "多图编辑")
+                if len(images) >= 2:
+                    logger.info(f"EditImage: 开始多图编辑，用户 {key}，{len(images)} 张图片")
+                    # 先回复收到请求
+                    notice = "您的多图编辑请求已经收到，请稍候..."
+                    await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+                    
+                    await self.handle_blend_service(images, prompt, message, bot)
+                    # 清理状态
+                    self.waiting_blend.pop(key, None)
+                else:
+                    tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             return False
             
         return True
@@ -292,6 +387,28 @@ class EditImage(PluginBase):
             self.waiting_inpaint_image.pop(key, None)
             self.image_msgid_cache.add(msg_id)
             logger.info(f"EditImage: Gemini修图流程结束: MsgId={msg_id}")
+            return False # 阻止后续插件处理
+
+        # 新增：检查是否有多图编辑任务
+        waiting_blend_info = self.waiting_blend.get(key)
+        if waiting_blend_info:
+            # 将图片保存到临时文件
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                tmp_file.write(image_bytes)
+                tmp_file_path = tmp_file.name
+            
+            # 将图片路径添加到多图编辑状态中
+            self.waiting_blend[key]["images"].append(tmp_file_path)
+            num_images = len(self.waiting_blend[key]["images"])
+            tip = f"✅ 已收到第 {num_images} 张图片。\n请继续发送图片，或发送 '{self.end_prefix}' 开始多图编辑。"
+            if message.get("IsGroup"):
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
+            
+            self.image_msgid_cache.add(msg_id)
+            logger.info(f"EditImage: 多图编辑收集图片: MsgId={msg_id}, 当前共{num_images}张")
             return False # 阻止后续插件处理
             
         logger.info(f"EditImage: MsgId={msg_id} 无待处理的编辑或修图任务")
@@ -659,3 +776,147 @@ class EditImage(PluginBase):
             #         logger.info(f"[EditImage] Temporary image file {temp_file_path} deleted.")
             #     except Exception as e:
             #         logger.error(f"[EditImage] Error deleting temporary image file {temp_file_path}: {e}")
+
+    async def handle_blend_service(self, image_paths, prompt, message, bot):
+        """使用gpt-image-1进行多图编辑/混合，参考stability.py实现"""
+        logger.info(f"EditImage: 开始多图编辑服务，用户: {self.get_waiting_key(message)}")
+
+        if not self.openai_image_api_key or not self.openai_image_api_base:
+            error_msg = "OpenAI API配置不完整，请在配置文件中设置openai_image_api_key和openai_image_api_base"
+            if message.get("IsGroup"):
+                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], error_msg)
+            # 清理临时图片文件
+            for path in image_paths:
+                try:
+                    os.remove(path)
+                    logger.info(f"EditImage: 多图编辑cleanup，文件 {path} 已删除")
+                except Exception as e:
+                    logger.error(f"EditImage: 多图编辑cleanup，删除文件 {path} 失败: {e}")
+            return
+
+        try:
+            # 发送请求前的提示
+            tip_msg = f"🎨 gpt-image-1多图编辑请求已进入队列，预计需要30-150秒完成, 请稍候...\n提示词：{prompt}"
+            if message.get("IsGroup"):
+                await bot.send_at_message(message["FromWxid"], tip_msg, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip_msg)
+            
+            # 构建API请求URL
+            url = f"{self.openai_image_api_base}/images/edits"
+            
+            # 构建请求头
+            headers = {
+                "Authorization": f"Bearer {self.openai_image_api_key}"
+            }
+            
+            # 准备多图文件和请求数据
+            data = aiohttp.FormData()
+            
+            # 添加模型和提示词
+            data.add_field('model', self.image_model)
+            data.add_field('prompt', prompt)
+            
+            # 添加所有图片
+            for i, image_path in enumerate(image_paths):
+                try:
+                    file_key = f'image' if i == 0 else f'image[{i}]'
+                    data.add_field(file_key, open(image_path, 'rb'), filename=f'image{i}.png', content_type='image/png')
+                except Exception as e:
+                    logger.error(f"EditImage: 读取图片失败 {image_path}: {e}")
+                    error_msg = f"处理图片 {os.path.basename(image_path)} 时出错，多图编辑失败。"
+                    if message.get("IsGroup"):
+                        await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                    else:
+                        await bot.send_text_message(message["FromWxid"], error_msg)
+                    # 清理临时图片文件
+                    for path in image_paths:
+                        try:
+                            os.remove(path)
+                        except Exception as remove_e:
+                            logger.error(f"EditImage: 多图编辑error cleanup，删除文件 {path} 失败: {remove_e}")
+                    return
+            
+            # 发送POST请求
+            logger.info("[EditImage] 发送多图编辑请求到API")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, data=data, timeout=1200) as response:
+                    # 检查响应状态
+                    if response.status != 200:
+                        logger.error(f"[EditImage] API请求失败，状态码 {response.status}: {await response.text()}")
+                        
+                        # 检查是否是安全系统拒绝的错误
+                        error_message = "多图编辑失败"
+                        try:
+                            error_json = await response.json()
+                            if "error" in error_json and "code" in error_json["error"]:
+                                if error_json["error"]["code"] == "moderation_blocked" or "safety" in error_json["error"]["message"].lower():
+                                    error_message = "触发了图片的安全审查，请尝试使用其他图片或修改提示词。"
+                                else:
+                                    error_message = f"{error_message}: {await response.text()}"
+                            else:
+                                error_message = f"{error_message}: {await response.text()}"
+                        except:
+                            error_message = f"{error_message}: {await response.text()}"
+                        
+                        if message.get("IsGroup"):
+                            await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                        else:
+                            await bot.send_text_message(message["FromWxid"], error_message)
+                        return
+                    
+                    # 解析JSON响应
+                    result = await response.json()
+                    
+                    # 处理返回结果
+                    if "data" in result and len(result["data"]) > 0:
+                        image_data = result["data"][0]
+                        
+                        if "b64_json" in image_data and image_data["b64_json"]:
+                            # 从base64获取图片数据
+                            import base64
+                            edited_image_bytes = base64.b64decode(image_data["b64_json"])
+                            
+                            logger.info(f"[EditImage] 多图编辑完成，结果大小: {len(edited_image_bytes)} 字节")
+                            
+                            # 发送编辑后的图像
+                            if message.get("IsGroup"):
+                                await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                                await bot.send_at_message(message["FromWxid"], "🖼️ 您的多图编辑已完成！", [message["SenderWxid"]])
+                            else:
+                                await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                        else:
+                            logger.error("[EditImage] API响应中没有b64_json")
+                            error_msg = "多图编辑失败，API没有返回图片数据"
+                            if message.get("IsGroup"):
+                                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                            else:
+                                await bot.send_text_message(message["FromWxid"], error_msg)
+                    else:
+                        logger.error("[EditImage] API响应格式无效")
+                        error_msg = "多图编辑失败，API返回格式不正确"
+                        if message.get("IsGroup"):
+                            await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                        else:
+                            await bot.send_text_message(message["FromWxid"], error_msg)
+
+        except Exception as e:
+            logger.error(f"[EditImage] 多图编辑服务异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+            error_msg = f"多图编辑服务内部出错: {str(e)}"
+            if message.get("IsGroup"):
+                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], error_msg)
+        finally:
+            # 清理临时图片文件
+            for path in image_paths:
+                try:
+                    os.remove(path)
+                    logger.info(f"EditImage: 多图编辑cleanup，文件 {path} 已删除")
+                except Exception as e:
+                    logger.error(f"EditImage: 多图编辑cleanup，删除文件 {path} 失败: {e}")
