@@ -812,14 +812,14 @@ class EditImage(PluginBase):
             file_handles = []  # 保存文件句柄以便后续关闭
             for i, image_path in enumerate(image_paths):
                 try:
-                    # 根据OpenAI官方文档，所有图片都使用相同的字段名'image'，这样会形成数组
-                    field_name = 'image'
+                    # 根据API错误提示，使用'image[]'作为字段名来表示数组
+                    field_name = 'image[]'
                     
                     # 打开文件并保存句柄
                     file_handle = open(image_path, 'rb')
                     file_handles.append(file_handle)
                     
-                    # 添加到FormData - 多个同名字段会自动形成数组
+                    # 添加到FormData - 使用数组语法
                     data.add_field(field_name, file_handle, filename=f'image{i}.png', content_type='image/png')
                     logger.info(f"EditImage: 添加图片文件 {field_name}[{i}]: {image_path}")
                     
