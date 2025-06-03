@@ -819,12 +819,32 @@ class EditImage(PluginBase):
             data.add_field('model', self.image_model)
             data.add_field('prompt', prompt)
             
-            # 添加所有图片
+            # 打开并添加所有图片文件
+            file_handles = []  # 保存文件句柄以便后续关闭
             for i, image_path in enumerate(image_paths):
                 try:
-                    file_key = f'image' if i == 0 else f'image[{i}]'
-                    data.add_field(file_key, open(image_path, 'rb'), filename=f'image{i}.png', content_type='image/png')
+                    # 第一张图片用'image'，后续图片用'image[index]'格式
+                    if i == 0:
+                        field_name = 'image'
+                    else:
+                        field_name = f'image[{i}]'
+                    
+                    # 打开文件并保存句柄
+                    file_handle = open(image_path, 'rb')
+                    file_handles.append(file_handle)
+                    
+                    # 添加到FormData
+                    data.add_field(field_name, file_handle, filename=f'image{i}.png', content_type='image/png')
+                    logger.info(f"EditImage: 添加图片文件 {field_name}: {image_path}")
+                    
                 except Exception as e:
+                    # 关闭已打开的文件句柄
+                    for fh in file_handles:
+                        try:
+                            fh.close()
+                        except:
+                            pass
+                    
                     logger.error(f"EditImage: 读取图片失败 {image_path}: {e}")
                     error_msg = f"处理图片 {os.path.basename(image_path)} 时出错，多图编辑失败。"
                     if message.get("IsGroup"):
@@ -842,65 +862,73 @@ class EditImage(PluginBase):
             # 发送POST请求
             logger.info("[EditImage] 发送多图编辑请求到API")
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, data=data, timeout=1200) as response:
-                    # 检查响应状态
-                    if response.status != 200:
-                        logger.error(f"[EditImage] API请求失败，状态码 {response.status}: {await response.text()}")
-                        
-                        # 检查是否是安全系统拒绝的错误
-                        error_message = "多图编辑失败"
-                        try:
-                            error_json = await response.json()
-                            if "error" in error_json and "code" in error_json["error"]:
-                                if error_json["error"]["code"] == "moderation_blocked" or "safety" in error_json["error"]["message"].lower():
-                                    error_message = "触发了图片的安全审查，请尝试使用其他图片或修改提示词。"
+                try:
+                    async with session.post(url, headers=headers, data=data, timeout=1200) as response:
+                        # 检查响应状态
+                        if response.status != 200:
+                            logger.error(f"[EditImage] API请求失败，状态码 {response.status}: {await response.text()}")
+                            
+                            # 检查是否是安全系统拒绝的错误
+                            error_message = "多图编辑失败"
+                            try:
+                                error_json = await response.json()
+                                if "error" in error_json and "code" in error_json["error"]:
+                                    if error_json["error"]["code"] == "moderation_blocked" or "safety" in error_json["error"]["message"].lower():
+                                        error_message = "触发了图片的安全审查，请尝试使用其他图片或修改提示词。"
+                                    else:
+                                        error_message = f"{error_message}: {await response.text()}"
                                 else:
                                     error_message = f"{error_message}: {await response.text()}"
-                            else:
+                            except:
                                 error_message = f"{error_message}: {await response.text()}"
-                        except:
-                            error_message = f"{error_message}: {await response.text()}"
-                        
-                        if message.get("IsGroup"):
-                            await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
-                        else:
-                            await bot.send_text_message(message["FromWxid"], error_message)
-                        return
-                    
-                    # 解析JSON响应
-                    result = await response.json()
-                    
-                    # 处理返回结果
-                    if "data" in result and len(result["data"]) > 0:
-                        image_data = result["data"][0]
-                        
-                        if "b64_json" in image_data and image_data["b64_json"]:
-                            # 从base64获取图片数据
-                            import base64
-                            edited_image_bytes = base64.b64decode(image_data["b64_json"])
                             
-                            logger.info(f"[EditImage] 多图编辑完成，结果大小: {len(edited_image_bytes)} 字节")
-                            
-                            # 发送编辑后的图像
                             if message.get("IsGroup"):
-                                await bot.send_image_message(message["FromWxid"], edited_image_bytes)
-                                await bot.send_at_message(message["FromWxid"], "🖼️ 您的多图编辑已完成！", [message["SenderWxid"]])
+                                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
                             else:
-                                await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                                await bot.send_text_message(message["FromWxid"], error_message)
+                            return
+                        
+                        # 解析JSON响应
+                        result = await response.json()
+                        
+                        # 处理返回结果
+                        if "data" in result and len(result["data"]) > 0:
+                            image_data = result["data"][0]
+                            
+                            if "b64_json" in image_data and image_data["b64_json"]:
+                                # 从base64获取图片数据
+                                import base64
+                                edited_image_bytes = base64.b64decode(image_data["b64_json"])
+                                
+                                logger.info(f"[EditImage] 多图编辑完成，结果大小: {len(edited_image_bytes)} 字节")
+                                
+                                # 发送编辑后的图像
+                                if message.get("IsGroup"):
+                                    await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                                    await bot.send_at_message(message["FromWxid"], "🖼️ 您的多图编辑已完成！", [message["SenderWxid"]])
+                                else:
+                                    await bot.send_image_message(message["FromWxid"], edited_image_bytes)
+                            else:
+                                logger.error("[EditImage] API响应中没有b64_json")
+                                error_msg = "多图编辑失败，API没有返回图片数据"
+                                if message.get("IsGroup"):
+                                    await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                                else:
+                                    await bot.send_text_message(message["FromWxid"], error_msg)
                         else:
-                            logger.error("[EditImage] API响应中没有b64_json")
-                            error_msg = "多图编辑失败，API没有返回图片数据"
+                            logger.error("[EditImage] API响应格式无效")
+                            error_msg = "多图编辑失败，API返回格式不正确"
                             if message.get("IsGroup"):
                                 await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
                             else:
                                 await bot.send_text_message(message["FromWxid"], error_msg)
-                    else:
-                        logger.error("[EditImage] API响应格式无效")
-                        error_msg = "多图编辑失败，API返回格式不正确"
-                        if message.get("IsGroup"):
-                            await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
-                        else:
-                            await bot.send_text_message(message["FromWxid"], error_msg)
+                finally:
+                    # 确保关闭所有文件句柄
+                    for fh in file_handles:
+                        try:
+                            fh.close()
+                        except:
+                            pass
 
         except Exception as e:
             logger.error(f"[EditImage] 多图编辑服务异常: {e}")
