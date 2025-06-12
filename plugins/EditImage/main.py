@@ -98,6 +98,25 @@ class EditImage(PluginBase):
         else:
             return message["SenderWxid"]
 
+    def safe_at_list(self, at_list, bot):
+        """过滤at列表，确保不会@机器人自己"""
+        if not at_list:
+            return at_list
+        
+        # 获取机器人自己的wxid
+        bot_wxid = getattr(bot, 'wxid', None)
+        if not bot_wxid:
+            # 如果获取不到机器人wxid，直接返回原列表
+            return at_list
+        
+        # 过滤掉机器人自己的wxid
+        filtered_list = [wxid for wxid in at_list if wxid != bot_wxid]
+        
+        if len(filtered_list) != len(at_list):
+            logger.info(f"EditImage: 已过滤掉机器人自己的wxid: {bot_wxid}")
+        
+        return filtered_list
+
     @on_text_message(priority=30)
     async def handle_text(self, bot, message: dict):
         if not self.enable:
@@ -123,7 +142,8 @@ class EditImage(PluginBase):
                 del self.waiting_inpaint_image[key]
             tip = f"💡已开启图片编辑模式({self.image_model})，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             return False
@@ -133,7 +153,8 @@ class EditImage(PluginBase):
             if not self.gemini_client:
                 tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], tip, safe_at)
                 else:
                     await bot.send_text_message(message["FromWxid"], tip)
                 return False
@@ -151,7 +172,8 @@ class EditImage(PluginBase):
                 del self.waiting_edit_image[key]
             tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             return False
@@ -162,7 +184,8 @@ class EditImage(PluginBase):
             if not user_prompt:
                 tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.blend_prefix} + 空格 + 图片描述\n\n📝 示例：\n{self.blend_prefix} 把两只猫融合在一起\n{self.blend_prefix} 将第一张图的人物放到第二张图的背景中"
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], tip, safe_at)
                 else:
                     await bot.send_text_message(message["FromWxid"], tip)
                 return False
@@ -175,7 +198,8 @@ class EditImage(PluginBase):
             }
             tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.end_prefix}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             return False
@@ -194,7 +218,8 @@ class EditImage(PluginBase):
                 else:
                     tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
                     if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                        safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                        await bot.send_at_message(message["FromWxid"], tip, safe_at)
                     else:
                         await bot.send_text_message(message["FromWxid"], tip)
             return False
@@ -224,14 +249,16 @@ class EditImage(PluginBase):
             if key in self.waiting_inpaint_image:
                 del self.waiting_inpaint_image[key]
             tip = f"💡已开启图片编辑模式({self.image_model})，您接下来第一张图片会进行编辑。\n当前的提示词为：\n" + user_prompt
-            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+            await bot.send_at_message(message["FromWxid"], tip, safe_at)
             return False
 
         # 新增：处理 "修图" (Gemini Inpaint) 指令
         if self.inpaint_prefix in cleaned_content:
             if not self.gemini_client:
                 tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
                 return False
                 
             idx = cleaned_content.find(self.inpaint_prefix)
@@ -245,7 +272,8 @@ class EditImage(PluginBase):
             if key in self.waiting_edit_image:
                 del self.waiting_edit_image[key]
             tip = f"💡已开启Gemini修图模式({self.gemini_model_name})，您接下来第一张图片会进行修图。\n当前的提示词为：\n" + user_prompt
-            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+            await bot.send_at_message(message["FromWxid"], tip, safe_at)
             return False
             
         # 新增：多图编辑功能
@@ -254,7 +282,8 @@ class EditImage(PluginBase):
             user_prompt = cleaned_content[idx + len(self.blend_prefix):].strip()
             if not user_prompt:
                 tip = f"💡欢迎使用多图编辑功能，指令格式为:\n\n{self.blend_prefix} + 空格 + 图片描述\n\n📝 示例：\n{self.blend_prefix} 把两只猫融合在一起\n{self.blend_prefix} 将第一张图的人物放到第二张图的背景中"
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
                 return False
             
             # 清理之前的状态（如果存在）
@@ -264,7 +293,8 @@ class EditImage(PluginBase):
                 "images": []
             }
             tip = f"✨ 多图编辑模式已开启\n✏ 请发送至少2张图片，然后发送 '{self.end_prefix}' 结束上传并开始处理。\n当前提示词：{user_prompt}"
-            await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+            await bot.send_at_message(message["FromWxid"], tip, safe_at)
             return False
         
         # 新增：结束多图编辑模式
@@ -280,7 +310,8 @@ class EditImage(PluginBase):
                     self.waiting_blend.pop(key, None)
                 else:
                     tip = f"✨ 多图编辑模式\n✏ 您需要发送至少2张图片才能开始多图编辑。当前已发送 {len(images)} 张。请继续发送图片或重新开始。"
-                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], tip, safe_at)
             return False
             
         return True
@@ -392,7 +423,8 @@ class EditImage(PluginBase):
             num_images = len(self.waiting_blend[key]["images"])
             tip = f"✅ 已收到第 {num_images} 张图片。\n请继续发送图片，或发送 '{self.end_prefix}' 开始多图编辑。"
             if message.get("IsGroup"):
-                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
             
@@ -460,7 +492,9 @@ class EditImage(PluginBase):
             task_type = "修图"
             if not self.gemini_client:
                 tip = "抱歉，Gemini修图服务当前不可用，请联系管理员检查配置。"
-                if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                if message["IsGroup"]: 
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], tip, safe_at)
                 else: await bot.send_text_message(message["FromWxid"], tip)
                 if current_msg_id: self.image_msgid_cache.add(current_msg_id) # Cache to prevent retry
                 return False # Handled (error reported)
@@ -527,14 +561,18 @@ class EditImage(PluginBase):
             except Exception as e:
                 logger.error(f"EditImage (quote): Quoted image (MD5: {md5}) processing/validation failed for {task_type}: {e}")
                 reply_content = f"处理引用的图片时出错 ({task_type})，无法完成操作。"
-                if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+                if message["IsGroup"]: 
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], reply_content, safe_at)
                 else: await bot.send_text_message(message["FromWxid"], reply_content)
                 if current_msg_id: self.image_msgid_cache.add(current_msg_id)
                 return False # Handled (error reported)
         else:
             logger.warning(f"EditImage (quote): Failed to get valid image bytes from quote (MD5: {md5}) for {task_type}.")
             reply_content = "未能从本地获取引用的图片数据，无法进行操作。请确保图片最近已发送过。"
-            if message["IsGroup"]: await bot.send_at_message(message["FromWxid"], reply_content, [message["SenderWxid"]])
+            if message["IsGroup"]: 
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], reply_content, safe_at)
             else: await bot.send_text_message(message["FromWxid"], reply_content)
             if current_msg_id: self.image_msgid_cache.add(current_msg_id)
             return False # Handled (error reported)
@@ -554,7 +592,8 @@ class EditImage(PluginBase):
             # 发送请求前的提示
             tip_msg = f"🎨 gpt-image-1垫图请求已进入队列，预计需要30-150秒完成。请稍候...\n提示词：{prompt}"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], tip_msg, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip_msg, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip_msg)
             # 构建API请求
@@ -581,7 +620,8 @@ class EditImage(PluginBase):
                         except:
                             error_message = f"图片编辑失败: {await resp.text()}"
                         if message["IsGroup"]:
-                            await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                            await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                         else:
                             await bot.send_text_message(message["FromWxid"], error_message)
                         return
@@ -593,19 +633,22 @@ class EditImage(PluginBase):
                             # 直接发送图片字节
                             if message["IsGroup"]:
                                 await bot.send_image_message(message["FromWxid"], image_bytes)
-                                await bot.send_at_message(message["FromWxid"], "🖼️ 您的图片已编辑完成！", [message["SenderWxid"]])
+                                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                await bot.send_at_message(message["FromWxid"], "🖼️ 您的图片已编辑完成！", safe_at)
                             else:
                                 await bot.send_image_message(message["FromWxid"], image_bytes)
                         else:
                             error_message = "图片编辑失败，API没有返回图片数据"
                             if message["IsGroup"]:
-                                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                             else:
                                 await bot.send_text_message(message["FromWxid"], error_message)
                     else:
                         error_message = "图片编辑失败，API返回格式不正确"
                         if message["IsGroup"]:
-                            await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                            await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                         else:
                             await bot.send_text_message(message["FromWxid"], error_message)
         except Exception as e:
@@ -614,7 +657,8 @@ class EditImage(PluginBase):
             logger.error(traceback.format_exc())
             error_message = f"图片编辑服务出错: {str(e)}"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], error_message, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], error_message)
         finally:
@@ -632,7 +676,8 @@ class EditImage(PluginBase):
 
         tip_msg = f"🎨 Gemini修图服务({self.gemini_model_name})请求已提交，请稍候...\n提示词：{prompt}"
         if message["IsGroup"]:
-            await bot.send_at_message(message["FromWxid"], tip_msg, [message["SenderWxid"]])
+            safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+            await bot.send_at_message(message["FromWxid"], tip_msg, safe_at)
         else:
             await bot.send_text_message(message["FromWxid"], tip_msg)
 
@@ -671,7 +716,8 @@ class EditImage(PluginBase):
                     logger.error(f"[EditImage] Gemini: Detected image safety issue: {finish_reason_str}")
                     error_message = "由于图像安全策略限制，无法处理该图像。请尝试使用其他图片或修改提示词。"
                     if message["IsGroup"]:
-                        await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                        safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                        await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                     else:
                         await bot.send_text_message(message["FromWxid"], error_message)
                     return
@@ -690,7 +736,8 @@ class EditImage(PluginBase):
                 else:
                     error_message = "Gemini修图失败，API返回的响应结构无效。"
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                 else:
                     await bot.send_text_message(message["FromWxid"], error_message)
                 return
@@ -723,7 +770,8 @@ class EditImage(PluginBase):
                 full_text_response = "\n".join(text_parts_content).strip() # Join with newlines for readability
                 logger.info(f"[EditImage] Gemini: Sending a_text_response_to_user: {full_text_response[:200]}...")
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], full_text_response, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], full_text_response, safe_at)
                 else:
                     await bot.send_text_message(message["FromWxid"], full_text_response)
                 sent_something = True
@@ -744,18 +792,20 @@ class EditImage(PluginBase):
                 logger.error("[EditImage] Gemini: No suitable text or image data found in response parts to send to user.")
                 error_message = "Gemini修图失败，API没有返回可识别的内容。"
                 if message["IsGroup"]:
-                    await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                    await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                 else:
                     await bot.send_text_message(message["FromWxid"], error_message)
             
-            # Removed the generic success message: "🖼️ 您的图片已由Gemini修图完成！"
+            # Removed the generic success message: "��️ 您的图片已由Gemini修图完成！"
 
         except Exception as e:
             logger.error(f"[EditImage] Gemini inpaint service exception: {e}")
             logger.error(traceback.format_exc())
             error_message = f"Gemini修图服务出错: {str(e)}"
             if message["IsGroup"]:
-                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], error_message, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], error_message)
         # finally:
@@ -773,7 +823,8 @@ class EditImage(PluginBase):
         if not self.openai_image_api_key or not self.openai_image_api_base:
             error_msg = "OpenAI API配置不完整，请在配置文件中设置openai_image_api_key和openai_image_api_base"
             if message.get("IsGroup"):
-                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], error_msg, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], error_msg)
             # 清理临时图片文件
@@ -789,7 +840,8 @@ class EditImage(PluginBase):
             # 发送请求前的提示
             tip_msg = f"🎨 gpt-image-1多图编辑请求已进入队列，预计需要30-150秒完成, 请稍候...\n提示词：{prompt}"
             if message.get("IsGroup"):
-                await bot.send_at_message(message["FromWxid"], tip_msg, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], tip_msg, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], tip_msg)
             
@@ -834,7 +886,8 @@ class EditImage(PluginBase):
                     logger.error(f"EditImage: 读取图片失败 {image_path}: {e}")
                     error_msg = f"处理图片 {os.path.basename(image_path)} 时出错，多图编辑失败。"
                     if message.get("IsGroup"):
-                        await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                        safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                        await bot.send_at_message(message["FromWxid"], error_msg, safe_at)
                     else:
                         await bot.send_text_message(message["FromWxid"], error_msg)
                     # 清理临时图片文件
@@ -869,7 +922,8 @@ class EditImage(PluginBase):
                                 error_message = f"{error_message}: {await response.text()}"
                             
                             if message.get("IsGroup"):
-                                await bot.send_at_message(message["FromWxid"], error_message, [message["SenderWxid"]])
+                                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                await bot.send_at_message(message["FromWxid"], error_message, safe_at)
                             else:
                                 await bot.send_text_message(message["FromWxid"], error_message)
                             return
@@ -891,21 +945,24 @@ class EditImage(PluginBase):
                                 # 发送编辑后的图像
                                 if message.get("IsGroup"):
                                     await bot.send_image_message(message["FromWxid"], edited_image_bytes)
-                                    await bot.send_at_message(message["FromWxid"], "🖼️ 您的多图编辑已完成！", [message["SenderWxid"]])
+                                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                    await bot.send_at_message(message["FromWxid"], "🖼️ 您的多图编辑已完成！", safe_at)
                                 else:
                                     await bot.send_image_message(message["FromWxid"], edited_image_bytes)
                             else:
                                 logger.error("[EditImage] API响应中没有b64_json")
                                 error_msg = "多图编辑失败，API没有返回图片数据"
                                 if message.get("IsGroup"):
-                                    await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                                    safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                    await bot.send_at_message(message["FromWxid"], error_msg, safe_at)
                                 else:
                                     await bot.send_text_message(message["FromWxid"], error_msg)
                         else:
                             logger.error("[EditImage] API响应格式无效")
                             error_msg = "多图编辑失败，API返回格式不正确"
                             if message.get("IsGroup"):
-                                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                                await bot.send_at_message(message["FromWxid"], error_msg, safe_at)
                             else:
                                 await bot.send_text_message(message["FromWxid"], error_msg)
                 finally:
@@ -923,7 +980,8 @@ class EditImage(PluginBase):
 
             error_msg = f"多图编辑服务内部出错: {str(e)}"
             if message.get("IsGroup"):
-                await bot.send_at_message(message["FromWxid"], error_msg, [message["SenderWxid"]])
+                safe_at = self.safe_at_list([message["SenderWxid"]], bot)
+                await bot.send_at_message(message["FromWxid"], error_msg, safe_at)
             else:
                 await bot.send_text_message(message["FromWxid"], error_msg)
         finally:
