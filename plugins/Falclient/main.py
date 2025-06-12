@@ -329,12 +329,13 @@ class Falclient(PluginBase):
                 logger.warning(f"Falclient: base64解码失败: {e}")
         
         if image_bytes and len(image_bytes) > 0:
+            # 立即清除等待状态，避免重复处理
             if task_type == "img2video":
+                self.waiting_video.pop(key, None)  # 立即清除状态
                 await self.handle_img2video(bot, message, image_bytes, user_prompt)
-                self.waiting_video.pop(key, None)
             elif task_type == "edit_image":
+                self.waiting_edit.pop(key, None)  # 立即清除状态
                 await self.handle_edit_image(bot, message, image_bytes, user_prompt)
-                self.waiting_edit.pop(key, None)
         
         self.image_msgid_cache.add(msg_id)
         return False
