@@ -1191,7 +1191,10 @@ class Falclient(PluginBase):
                     if resp.status == 200:
                         result = await resp.json()
                         logger.info(f"[jimeng] API响应: {result}")
-                        
+                        # 新增：处理code -2007
+                        if isinstance(result, dict) and result.get('code') == -2007:
+                            await self.send_jimeng_error(bot, message, "您输入的文字不符合平台规则，请修改后重试")
+                            return
                         data_list = result.get('data', [])
                         if data_list:
                             # 遍历所有生成的图片URL并发送
