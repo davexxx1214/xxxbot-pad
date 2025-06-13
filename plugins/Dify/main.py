@@ -165,13 +165,15 @@ class Dify(PluginBase):
         if message.get("IsGroup") and self.is_at_message(message, self.robot_names):
             return
         content = message["Content"].strip()
-        content = content.lstrip()  # 去除前导空白
-        if not content:
-            return
         # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
         content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[len("画"):].strip()
+        # 新增：去掉所有@xxx和空白符（包括全角空格）
+        content = re.sub(r"@[\w\-_]+", "", content)
+        content = content.lstrip(" \u2005\u2002\u2003\u3000")
+        # 用正则提取"画"开头的内容
+        match = re.match(r"^画[：: ]?(.*)", content)
+        if match and self.image_generation_enabled:
+            prompt = match.group(1).strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -189,13 +191,15 @@ class Dify(PluginBase):
         if not self.enable:
             return
         content = message["Content"].strip()
-        content = content.lstrip()  # 去除前导空白
-        if not content:
-            return
         # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
         content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[len("画"):].strip()
+        # 新增：去掉所有@xxx和空白符（包括全角空白）
+        content = re.sub(r"@[\w\-_]+", "", content)
+        content = content.lstrip(" \u2005\u2002\u2003\u3000")
+        # 用正则提取"画"开头的内容
+        match = re.match(r"^画[：: ]?(.*)", content)
+        if match and self.image_generation_enabled:
+            prompt = match.group(1).strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
