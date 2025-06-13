@@ -167,26 +167,13 @@ class Dify(PluginBase):
         content = message["Content"].strip()
         # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
         content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        # 新增：去掉所有@昵称（支持中文和特殊字符）
-        content = re.sub(r"@[^\s\u2005\u2002\u2003\u3000]+", "", content)
+        # 新增：去掉所有@xxx和空白符（包括全角空格）
+        content = re.sub(r"@[\w\-_]+", "", content)
         content = content.lstrip(" \u2005\u2002\u2003\u3000")
-        # 分支1：以"画"开头
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[1:].strip()
-            logger.info(f"[Dify.handle_text] 以'画'开头，触发画图，prompt={prompt}")
-            if prompt:
-                await self.generate_openai_image(bot, message, prompt)
-            else:
-                at_wxid = message.get("SenderWxid")
-                if at_wxid and at_wxid != self.self_wxid:
-                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
-                else:
-                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return
-        # 分支2：前10个字符中包含"画"
-        if "画" in content[:10] and self.image_generation_enabled:
-            prompt = content.strip()
-            logger.info(f"[Dify.handle_text] 前10字符含'画'，触发画图，prompt={prompt}")
+        # 用正则提取"画"开头的内容
+        match = re.match(r"^画[：: ]?(.*)", content)
+        if match and self.image_generation_enabled:
+            prompt = match.group(1).strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -206,26 +193,13 @@ class Dify(PluginBase):
         content = message["Content"].strip()
         # 新增：去掉"昵称: 换行"前缀，保证startswith("画")能正确判断
         content = re.sub(r"^[^@\n]+:\s*\n", "", content)
-        # 新增：去掉所有@昵称（支持中文和特殊字符）
-        content = re.sub(r"@[^\s\u2005\u2002\u2003\u3000]+", "", content)
+        # 新增：去掉所有@xxx和空白符（包括全角空白）
+        content = re.sub(r"@[\w\-_]+", "", content)
         content = content.lstrip(" \u2005\u2002\u2003\u3000")
-        # 分支1：以"画"开头
-        if content.startswith("画") and self.image_generation_enabled:
-            prompt = content[1:].strip()
-            logger.info(f"[Dify.handle_at] 以'画'开头，触发画图，prompt={prompt}")
-            if prompt:
-                await self.generate_openai_image(bot, message, prompt)
-            else:
-                at_wxid = message.get("SenderWxid")
-                if at_wxid and at_wxid != self.self_wxid:
-                    await bot.send_at_message(message["FromWxid"], "\n请输入绘画内容。", [at_wxid])
-                else:
-                    await bot.send_text_message(message["FromWxid"], "请输入绘画内容。")
-            return False
-        # 分支2：前10个字符中包含"画"
-        if "画" in content[:10] and self.image_generation_enabled:
-            prompt = content.strip()
-            logger.info(f"[Dify.handle_at] 前10字符含'画'，触发画图，prompt={prompt}")
+        # 用正则提取"画"开头的内容
+        match = re.match(r"^画[：: ]?(.*)", content)
+        if match and self.image_generation_enabled:
+            prompt = match.group(1).strip()
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
