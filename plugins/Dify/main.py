@@ -173,6 +173,7 @@ class Dify(PluginBase):
         # 分支1：以"画"开头
         if content.startswith("画") and self.image_generation_enabled:
             prompt = content[1:].strip()
+            logger.info(f"[Dify.handle_text] 以'画'开头，触发画图，prompt={prompt}")
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -185,6 +186,7 @@ class Dify(PluginBase):
         # 分支2：前10个字符中包含"画"
         if "画" in content[:10] and self.image_generation_enabled:
             prompt = content.strip()
+            logger.info(f"[Dify.handle_text] 前10字符含'画'，触发画图，prompt={prompt}")
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -210,6 +212,7 @@ class Dify(PluginBase):
         # 分支1：以"画"开头
         if content.startswith("画") and self.image_generation_enabled:
             prompt = content[1:].strip()
+            logger.info(f"[Dify.handle_at] 以'画'开头，触发画图，prompt={prompt}")
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
@@ -222,6 +225,7 @@ class Dify(PluginBase):
         # 分支2：前10个字符中包含"画"
         if "画" in content[:10] and self.image_generation_enabled:
             prompt = content.strip()
+            logger.info(f"[Dify.handle_at] 前10字符含'画'，触发画图，prompt={prompt}")
             if prompt:
                 await self.generate_openai_image(bot, message, prompt)
             else:
