@@ -143,6 +143,13 @@ class Falclient(PluginBase):
         # 新增：veo3视频生成
         if content.startswith(self.veo3_prefix):
             user_prompt = content[len(self.veo3_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞\n\n该功能基于veo3大模型，生成高质量视频。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
             notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
@@ -243,6 +250,13 @@ class Falclient(PluginBase):
         if self.veo3_prefix in content:
             idx = content.find(self.veo3_prefix)
             user_prompt = content[idx + len(self.veo3_prefix):].strip()
+            if not user_prompt:
+                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞\n\n该功能基于veo3大模型，生成高质量视频。"
+                if message["IsGroup"]:
+                    await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                else:
+                    await bot.send_text_message(message["FromWxid"], tip)
+                return False
             notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
@@ -1340,4 +1354,9 @@ class Falclient(PluginBase):
                 retry += 1
                 await asyncio.sleep(2)
         # 超过重试次数
+        error_tip = f"veo3接口重试{max_retries}次仍失败，可能是服务器繁忙或内容不合规。请稍后重试，或更换描述内容。"
+        if message.get("IsGroup"):
+            await bot.send_at_message(message["FromWxid"], error_tip, [message["SenderWxid"]])
+        else:
+            await bot.send_text_message(message["FromWxid"], error_tip)
         await self.send_video_url(bot, message, f"veo3接口重试{max_retries}次仍失败", prompt)
