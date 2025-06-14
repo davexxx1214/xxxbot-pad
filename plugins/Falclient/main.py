@@ -152,13 +152,10 @@ class Falclient(PluginBase):
                 return False
             # 新增：展示用户提示词
             tip = f"💡已开启veo3视频生成模式，将根据您的描述生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
-            notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-                await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_veo3_video(bot, message, user_prompt)
             return False
         
@@ -263,13 +260,10 @@ class Falclient(PluginBase):
                 return False
             # 新增：展示用户提示词
             tip = f"💡已开启veo3视频生成模式，将根据您的描述生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
-            notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
-                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-                await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_veo3_video(bot, message, user_prompt)
             return False
         
@@ -1336,7 +1330,7 @@ class Falclient(PluginBase):
                             pass
                         # 回复prompt
                         if prompt_text:
-                            tip = f"💡veo3大模型理解您的描述如下：\n{prompt_text}"
+                            tip = f"💡veo3模型理解您的描述如下：\n{prompt_text}"
                             if message.get("IsGroup"):
                                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
                             else:
