@@ -144,7 +144,7 @@ class Falclient(PluginBase):
         if content.startswith(self.veo3_prefix):
             user_prompt = content[len(self.veo3_prefix):].strip()
             if not user_prompt:
-                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞\n\n该功能基于veo3大模型，生成高质量视频。"
+                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
                 else:
