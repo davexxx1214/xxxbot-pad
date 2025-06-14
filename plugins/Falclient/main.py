@@ -43,6 +43,10 @@ class Falclient(PluginBase):
             self.fal_api_key = plugin_config.get("fal_api_key", None)
             self.jimeng_api_key = plugin_config.get("jimeng_api_key", None)
             self.jimeng_url = plugin_config.get("jimeng_url", None)
+            self.openai_image_api_key = plugin_config.get("openai_image_api_key", None)
+            self.openai_image_api_base = plugin_config.get("openai_image_api_base", None)
+            self.veo3_prefix = plugin_config.get("veo3_prefix", "veo3")
+            self.veo3_retry_times = plugin_config.get("veo3_retry_times", 30)
             
             # 配置选项
             self.debug_mode = plugin_config.get("debug_mode", True)
@@ -114,23 +118,37 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "type": "img2video"
             }
-            tip = f"💡已开启kling2.1图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
+            tip = f"💡已开启kling2.1图生视频模式（kling2.1 image-to-video），您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], tip)
-
             return False
         # 文生视频
         if content.startswith(self.fal_text_prefix):
             user_prompt = content[len(self.fal_text_prefix):].strip()
             # 新增：先回复收到请求
             notice = "您的文生视频的请求已经收到，请稍候..."
+            tip = "💡已开启kling2.1文生视频模式（kling2.1 text-to-video），将根据您的描述生成视频。"
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_text2video(bot, message, user_prompt)
+            return False
+        # 新增：veo3视频生成
+        if content.startswith(self.veo3_prefix):
+            user_prompt = content[len(self.veo3_prefix):].strip()
+            notice = "您的veo3视频生成请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
+            await self.handle_veo3_video(bot, message, user_prompt)
             return False
         
         # 新增：图片编辑
@@ -192,7 +210,7 @@ class Falclient(PluginBase):
                 "prompt": user_prompt,
                 "type": "img2video"
             }
-            tip = f"💡已开启kling2.1图生视频模式，您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
+            tip = f"💡已开启kling2.1图生视频模式（kling2.1 image-to-video），您接下来第一张图片会生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
             else:
@@ -209,12 +227,28 @@ class Falclient(PluginBase):
             idx = content.find(self.fal_text_prefix)
             user_prompt = content[idx + len(self.fal_text_prefix):].strip()
             # 新增：先回复收到请求
+            tip = "💡已开启kling2.1文生视频模式（kling2.1 text-to-video），将根据您的描述生成视频。"
             notice = "您的文生视频的请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], tip)
             if message["IsGroup"]:
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
                 await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_text2video(bot, message, user_prompt)
+            return False
+        # 新增：veo3视频生成
+        if self.veo3_prefix in content:
+            idx = content.find(self.veo3_prefix)
+            user_prompt = content[idx + len(self.veo3_prefix):].strip()
+            notice = "您的veo3视频生成请求已经收到，请稍候..."
+            if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
+            else:
+                await bot.send_text_message(message["FromWxid"], notice)
+            await self.handle_veo3_video(bot, message, user_prompt)
             return False
         
         # 新增：图片编辑
@@ -1230,3 +1264,80 @@ class Falclient(PluginBase):
             await bot.send_at_message(message["FromWxid"], full_error, [message["SenderWxid"]])
         else:
             await bot.send_text_message(message["FromWxid"], full_error)
+
+    async def handle_veo3_video(self, bot, message, prompt):
+        """处理veo3视频生成任务，支持重试机制"""
+        import aiohttp
+        import asyncio
+        import re
+        max_retries = self.veo3_retry_times if hasattr(self, 'veo3_retry_times') else 30
+        api_key = self.openai_image_api_key
+        api_base = self.openai_image_api_base or "https://api.tu-zi.com/v1"
+        url = f"{api_base}/chat/completions"
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        data = {
+            "temperature": 0.7,
+            "messages": [
+                {"content": prompt, "role": "user"}
+            ],
+            "model": "veo3",
+            "stream": True
+        }
+        retry = 0
+        while retry < max_retries:
+            try:
+                timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=300)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, headers=headers, json=data) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            logger.warning(f"veo3接口返回非200: {resp.status}, {text}")
+                            retry += 1
+                            await asyncio.sleep(2)
+                            continue
+                        # 逐行处理stream响应
+                        video_url = None
+                        async for line in resp.content:
+                            try:
+                                line = line.decode().strip()
+                                if not line or not line.startswith('data: '):
+                                    continue
+                                json_str = line[6:]
+                                if json_str == '[DONE]':
+                                    break
+                                obj = json.loads(json_str)
+                                # 查找视频url
+                                if 'content' in obj.get('choices', [{}])[0].get('delta', {}):
+                                    content = obj['choices'][0]['delta']['content']
+                                    # 匹配视频url
+                                    match = re.search(r'https?://[^\s\]\)]+\\.mp4', content)
+                                    if match:
+                                        video_url = match.group(0)
+                                        break
+                            except Exception as e:
+                                logger.warning(f"veo3流解析异常: {e}")
+                        if video_url:
+                            logger.info(f"veo3视频url获取成功: {video_url}")
+                            await self.send_video_url(bot, message, video_url, prompt)
+                            return
+                        else:
+                            # 检查是否有错误提示
+                            resp_text = await resp.text()
+                            if '当前模型负载较高' in resp_text or 'error' in resp_text:
+                                logger.warning(f"veo3接口返回错误: {resp_text}")
+                                retry += 1
+                                await asyncio.sleep(2)
+                                continue
+                            logger.error(f"veo3未获取到视频url, resp: {resp_text}")
+                            await self.send_video_url(bot, message, "未获取到视频URL", prompt)
+                            return
+            except Exception as e:
+                logger.warning(f"veo3请求异常: {e}")
+                retry += 1
+                await asyncio.sleep(2)
+        # 超过重试次数
+        await self.send_video_url(bot, message, f"veo3接口重试{max_retries}次仍失败", prompt)
