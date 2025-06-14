@@ -150,10 +150,14 @@ class Falclient(PluginBase):
                 else:
                     await bot.send_text_message(message["FromWxid"], tip)
                 return False
+            # 新增：展示用户提示词
+            tip = f"💡已开启veo3视频生成模式，将根据您的描述生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
+                await bot.send_text_message(message["FromWxid"], tip)
                 await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_veo3_video(bot, message, user_prompt)
             return False
@@ -251,16 +255,20 @@ class Falclient(PluginBase):
             idx = content.find(self.veo3_prefix)
             user_prompt = content[idx + len(self.veo3_prefix):].strip()
             if not user_prompt:
-                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞\n\n该功能基于veo3大模型，生成高质量视频。"
+                tip = f"💡欢迎使用veo3视频生成，指令格式为:\n\n{self.veo3_prefix} + 空格 + 视频描述（支持中文）\n例如：{self.veo3_prefix} 一个宇航员在月球上跳舞"
                 if message["IsGroup"]:
                     await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
                 else:
                     await bot.send_text_message(message["FromWxid"], tip)
                 return False
+            # 新增：展示用户提示词
+            tip = f"💡已开启veo3视频生成模式，将根据您的描述生成视频。\n当前的提示词为：\n" + (user_prompt or "无")
             notice = "您的veo3视频生成请求已经收到，请稍候..."
             if message["IsGroup"]:
+                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
                 await bot.send_at_message(message["FromWxid"], notice, [message["SenderWxid"]])
             else:
+                await bot.send_text_message(message["FromWxid"], tip)
                 await bot.send_text_message(message["FromWxid"], notice)
             await self.handle_veo3_video(bot, message, user_prompt)
             return False
@@ -1280,7 +1288,7 @@ class Falclient(PluginBase):
             await bot.send_text_message(message["FromWxid"], full_error)
 
     async def handle_veo3_video(self, bot, message, prompt):
-        """处理veo3视频生成任务，支持重试机制"""
+        """处理veo3视频生成任务，非流式，提取prompt和视频url，分别回复用户和下载视频"""
         import aiohttp
         import asyncio
         import re
@@ -1299,7 +1307,7 @@ class Falclient(PluginBase):
                 {"content": prompt, "role": "user"}
             ],
             "model": "veo3",
-            "stream": True
+            "stream": False
         }
         retry = 0
         while retry < max_retries:
@@ -1307,45 +1315,43 @@ class Falclient(PluginBase):
                 timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=300)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.post(url, headers=headers, json=data) as resp:
+                        resp_text = await resp.text()
                         if resp.status != 200:
-                            text = await resp.text()
-                            logger.warning(f"veo3接口返回非200: {resp.status}, {text}")
+                            logger.warning(f"veo3接口返回非200: {resp.status}, {resp_text}")
                             retry += 1
                             await asyncio.sleep(2)
                             continue
-                        # 逐行处理stream响应
+                        try:
+                            result = json.loads(resp_text)
+                        except Exception as e:
+                            logger.warning(f"veo3响应解析失败: {e}, 内容: {resp_text}")
+                            retry += 1
+                            await asyncio.sleep(2)
+                            continue
+                        # 提取prompt
+                        prompt_text = None
+                        try:
+                            prompt_text = result["choices"][0]["message"]["content"]
+                        except Exception:
+                            pass
+                        # 回复prompt
+                        if prompt_text:
+                            tip = f"💡veo3大模型理解您的描述如下：\n{prompt_text}"
+                            if message.get("IsGroup"):
+                                await bot.send_at_message(message["FromWxid"], tip, [message["SenderWxid"]])
+                            else:
+                                await bot.send_text_message(message["FromWxid"], tip)
+                        # 提取视频url
                         video_url = None
-                        async for line in resp.content:
-                            try:
-                                line = line.decode().strip()
-                                if not line or not line.startswith('data: '):
-                                    continue
-                                json_str = line[6:]
-                                if json_str == '[DONE]':
-                                    break
-                                obj = json.loads(json_str)
-                                # 查找视频url
-                                if 'content' in obj.get('choices', [{}])[0].get('delta', {}):
-                                    content = obj['choices'][0]['delta']['content']
-                                    # 匹配视频url
-                                    match = re.search(r'https?://[^\s\]\)]+\\.mp4', content)
-                                    if match:
-                                        video_url = match.group(0)
-                                        break
-                            except Exception as e:
-                                logger.warning(f"veo3流解析异常: {e}")
+                        # 先找高质量视频
+                        match = re.search(r'https?://[\w\-\./]+\.mp4', resp_text)
+                        if match:
+                            video_url = match.group(0)
                         if video_url:
                             logger.info(f"veo3视频url获取成功: {video_url}")
                             await self.send_video_url(bot, message, video_url, prompt)
                             return
                         else:
-                            # 检查是否有错误提示
-                            resp_text = await resp.text()
-                            if '当前模型负载较高' in resp_text or 'error' in resp_text:
-                                logger.warning(f"veo3接口返回错误: {resp_text}")
-                                retry += 1
-                                await asyncio.sleep(2)
-                                continue
                             logger.error(f"veo3未获取到视频url, resp: {resp_text}")
                             await self.send_video_url(bot, message, "未获取到视频URL", prompt)
                             return
