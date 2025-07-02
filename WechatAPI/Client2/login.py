@@ -47,7 +47,23 @@ class LoginMixin(WechatAPIClientBase):
                                            'ProxyPassword': proxy.password,
                                            'ProxyUser': proxy.username}
 
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/LoginGetQR', json=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                qr_api_path = "/api/Login/GetQR"  # 855版本使用的路径
+            elif protocol_version == "Mac":
+                qr_api_path = "/api/Login/GetQRMac"  # Mac版本使用的路径
+            else:
+                qr_api_path = "/api/Login/LoginGetQR"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{qr_api_path}', json=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success"):
@@ -83,7 +99,21 @@ class LoginMixin(WechatAPIClientBase):
         """
         async with aiohttp.ClientSession() as session:
             json_param = {"uuid": uuid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/LoginCheckQR', data=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                check_qr_api_path = "/api/Login/CheckQR"  # 855版本使用的路径
+            else:
+                check_qr_api_path = "/api/Login/LoginCheckQR"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{check_qr_api_path}', data=json_param)
             if response.content_type == 'application/json':
                 json_resp = await response.json()
                 if json_resp and json_resp.get("Success"):
@@ -146,7 +176,21 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/LoginAwaken', json=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                awaken_api_path = "/api/Login/Awaken"  # 855版本使用的路径
+            else:
+                awaken_api_path = "/api/Login/LoginAwaken"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{awaken_api_path}', json=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success") and json_resp.get("Data").get("QrCodeResponse").get("Uuid"):
@@ -180,7 +224,21 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"wxid": wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/LoginTwiceAutoAuth', data=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                twice_auth_api_path = "/api/Login/TwiceAutoAuth"  # 855版本使用的路径
+            else:
+                twice_auth_api_path = "/api/Login/LoginTwiceAutoAuth"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{twice_auth_api_path}', data=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success"):
@@ -224,7 +282,21 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/AutoHeartBeat', json=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855版本使用的路径
+            else:
+                heartbeat_api_path = "/api/Login/AutoHeartBeat"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{heartbeat_api_path}', json=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success"):
@@ -248,7 +320,21 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"wxid": self.wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/AutoHeartBeat', data=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                start_heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855版本使用的路径
+            else:
+                start_heartbeat_api_path = "/api/Login/AutoHeartBeat"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{start_heartbeat_api_path}', data=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success"):
@@ -295,7 +381,21 @@ class LoginMixin(WechatAPIClientBase):
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid}
-            response = await session.post(f'http://{self.ip}:{self.port}/api/Login/AutoHeartBeatLog', json=json_param)
+            # 根据协议版本选择不同的API路径
+            import tomllib
+            try:
+                with open("main_config.toml", "rb") as f:
+                    config = tomllib.load(f)
+                protocol_version = config.get("Protocol", {}).get("version", "ipad")
+            except:
+                protocol_version = "ipad"  # 默认版本
+
+            if protocol_version == "855":
+                heartbeat_status_api_path = "/api/Login/AutoHeartbeatStatus"  # 855版本使用的路径
+            else:
+                heartbeat_status_api_path = "/api/Login/AutoHeartBeatLog"  # 其他版本使用的默认路径
+
+            response = await session.post(f'http://{self.ip}:{self.port}{heartbeat_status_api_path}', json=json_param)
             json_resp = await response.json()
 
             if json_resp.get("Success"):
