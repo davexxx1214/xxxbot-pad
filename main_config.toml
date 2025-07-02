@@ -1,6 +1,6 @@
 # 协议版本选择
 [Protocol]
-version = "ipad"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
+version = "855"            # 协议版本，可选值: "849", "855" 或 "ipad"，暂时别用855
 
 [Framework]
 type = "default"  # 可选值: "default", "dual","wechat" (dual模式先启动原始框架，再启动DOW,wechat不启动内部协议)
