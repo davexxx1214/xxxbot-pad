@@ -58,6 +58,8 @@ class LoginMixin(WechatAPIClientBase):
 
             if protocol_version == "855":
                 qr_api_path = "/api/Login/GetQRx"  # 855版本使用绕过验证码的路径
+            elif protocol_version == "ipad":
+                qr_api_path = "/api/Login/GetQRx"  # iPad版本使用绕过验证码的路径
             elif protocol_version == "Mac":
                 qr_api_path = "/api/Login/GetQRMac"  # Mac版本使用的路径
             else:
@@ -108,8 +110,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                check_qr_api_path = "/api/Login/CheckQR"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                check_qr_api_path = "/api/Login/CheckQR"  # 855和iPad版本使用的路径
             else:
                 check_qr_api_path = "/api/Login/LoginCheckQR"  # 其他版本使用的默认路径
 
@@ -185,8 +187,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                awaken_api_path = "/api/Login/Awaken"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                awaken_api_path = "/api/Login/Awaken"  # 855和iPad版本使用的路径
             else:
                 awaken_api_path = "/api/Login/LoginAwaken"  # 其他版本使用的默认路径
 
@@ -233,8 +235,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                twice_auth_api_path = "/api/Login/TwiceAutoAuth"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                twice_auth_api_path = "/api/Login/TwiceAutoAuth"  # 855和iPad版本使用的路径
             else:
                 twice_auth_api_path = "/api/Login/LoginTwiceAutoAuth"  # 其他版本使用的默认路径
 
@@ -291,8 +293,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855和iPad版本使用的路径
             else:
                 heartbeat_api_path = "/api/Login/AutoHeartBeat"  # 其他版本使用的默认路径
 
@@ -329,8 +331,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                start_heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                start_heartbeat_api_path = "/api/Login/HeartBeatLong"  # 855和iPad版本使用的路径
             else:
                 start_heartbeat_api_path = "/api/Login/AutoHeartBeat"  # 其他版本使用的默认路径
 
@@ -390,8 +392,8 @@ class LoginMixin(WechatAPIClientBase):
             except:
                 protocol_version = "ipad"  # 默认版本
 
-            if protocol_version == "855":
-                heartbeat_status_api_path = "/api/Login/AutoHeartbeatStatus"  # 855版本使用的路径
+            if protocol_version == "855" or protocol_version == "ipad":
+                heartbeat_status_api_path = "/api/Login/AutoHeartbeatStatus"  # 855和iPad版本使用的路径
             else:
                 heartbeat_status_api_path = "/api/Login/AutoHeartBeatLog"  # 其他版本使用的默认路径
 
