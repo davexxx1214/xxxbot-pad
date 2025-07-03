@@ -27,7 +27,7 @@ log_level = "INFO"         # 日志级别，可选值: "DEBUG", "INFO", "WARNING
 # XYBot 核心设置
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
-ignore-protection = true             # 是否忽略风控保护机制，建议保持false
+ignore-protection = false         # 是否忽略风控保护机制，建议保持false
 
 # 群聊唤醒词设置
 enable-group-wakeup = true           # 是否启用群聊唤醒词功能
